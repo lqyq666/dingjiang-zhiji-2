@@ -1,0 +1,46 @@
+name: Task Contract
+description: Freeze one bounded implementation task before development starts.
+title: "[Task] "
+body:
+  - type: textarea
+    id: objective
+    attributes:
+      label: Required outcome
+      description: State one observable, verifiable outcome.
+    validations:
+      required: true
+  - type: input
+    id: base
+    attributes:
+      label: Base commit
+      description: Exact 40-character commit SHA.
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Allowed and forbidden paths
+      description: List allowed paths, forbidden paths and explicit non-goals.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Every item must be independently observable and executable.
+    validations:
+      required: true
+  - type: textarea
+    id: external
+    attributes:
+      label: External action authority
+      description: List allowed and forbidden pushes, deployments, data/auth changes, messages and paid calls.
+    validations:
+      required: true
+  - type: checkboxes
+    id: confirmation
+    attributes:
+      label: Contract activation
+      options:
+        - label: This Issue is discussion only until Codex freezes a concrete Task Contract and CURRENT_TASK becomes ACTIVE.
+          required: true

@@ -1,0 +1,40 @@
+name: Bug report
+description: Record a reproducible defect without expanding implementation scope.
+title: "[Bug] "
+body:
+  - type: textarea
+    id: observed
+    attributes:
+      label: Observed behavior
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction and evidence
+      description: Include commands and sanitized output; never paste secrets or production data.
+    validations:
+      required: true
+  - type: textarea
+    id: impact
+    attributes:
+      label: Impact and affected scope
+    validations:
+      required: true
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Initial severity
+      options:
+        - BLOCKER
+        - HIGH
+        - MEDIUM
+        - LOW
+    validations:
+      required: true

@@ -1,0 +1,167 @@
+name: ${COMPOSE_PROJECT_NAME:?Set COMPOSE_PROJECT_NAME}
+x-runtime: &runtime
+  NODE_ENV: production
+  DINGJIANG_DEPLOYMENT_MODE: production
+  DINGJIANG_TENANT_ID: ${DINGJIANG_TENANT_ID:?Set tenant}
+  DINGJIANG_COMPANY_NAME: ${DINGJIANG_COMPANY_NAME:?Set company}
+  DINGJIANG_TARGET_OTD: ${DINGJIANG_TARGET_OTD:?Set target}
+  DATABASE_URL: postgres://dingjiang_runtime:${DJ_RUNTIME_PASSWORD:?Set runtime password}@db:5432/dingjiang
+  WEB_ORIGIN: https://${DJ_DOMAIN:?Set domain}
+  DINGJIANG_TRUST_PROXY: "1"
+  API_HOST: 0.0.0.0
+  PORT: "3001"
+  VS15_MATERIAL_VAULT_ROOT: /var/lib/dingjiang/materials
+  DINGJIANG_PRODUCTION_WRITES: ${DINGJIANG_PRODUCTION_WRITES:-disabled}
+  DINGJIANG_WRITE_ACCEPTANCE_REF: ${DINGJIANG_WRITE_ACCEPTANCE_REF:-}
+  COZE_PROVIDER_MODE: DEMO_RULES
+  FEISHU_PROVIDER_MODE: ${FEISHU_PROVIDER_MODE:-DEMO_RULES}
+  FEISHU_APP_ID: ${FEISHU_APP_ID:-}
+  FEISHU_APP_SECRET: ${FEISHU_APP_SECRET:-}
+  FEISHU_BASE_APP_TOKEN: ${FEISHU_BASE_APP_TOKEN:-}
+  FEISHU_REVIEW_TABLE_ID: ${FEISHU_REVIEW_TABLE_ID:-}
+  FEISHU_APPROVER_OPEN_ID: ${FEISHU_APPROVER_OPEN_ID:-}
+  PI_RUNTIME_ENABLED: "false"
+x-log: &logs
+  driver: json-file
+  options: { max-size: "10m", max-file: "5" }
+services:
+  db:
+    image: dingjiang-db:${DJ_RELEASE_TAG:?Set immutable release tag}
+    build: { context: .., dockerfile: deploy/Dockerfile, target: db }
+    user: postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: dingjiang
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${DJ_DB_ADMIN_PASSWORD:?Set admin password}
+      DJ_RUNTIME_PASSWORD: ${DJ_RUNTIME_PASSWORD:?Set runtime password}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./postgres-init.sh:/docker-entrypoint-initdb.d/010-runtime.sh:ro
+      - ./runtime-grants.sql:/runtime-grants.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d dingjiang"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    mem_limit: 1536m
+    shm_size: 256m
+    logging: *logs
+    networks: [backend]
+  api:
+    image: dingjiang-api:${DJ_RELEASE_TAG:?Set immutable release tag}
+    build: { context: .., dockerfile: deploy/Dockerfile, target: api }
+    restart: unless-stopped
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    environment: *runtime
+    volumes: ["materials:/var/lib/dingjiang/materials"]
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=64m"]
+    depends_on: { db: { condition: service_healthy } }
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "/usr/local/bin/node",
+          "-e",
+          "fetch('http://127.0.0.1:3001/api/health/ready',{signal:AbortSignal.timeout(5000)}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 7s
+      retries: 3
+      start_period: 30s
+    stop_grace_period: 45s
+    mem_limit: 1024m
+    logging: *logs
+    networks: [backend, frontend]
+  web:
+    image: dingjiang-web:${DJ_RELEASE_TAG:?Set immutable release tag}
+    build: { context: .., dockerfile: deploy/Dockerfile, target: web }
+    restart: unless-stopped
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    environment: { NODE_ENV: production, NEXT_TELEMETRY_DISABLED: "1" }
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=64m"]
+    volumes: ["web-cache:/app/apps/web/.next/cache"]
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "/usr/local/bin/node",
+          "-e",
+          "fetch('http://127.0.0.1:3000',{signal:AbortSignal.timeout(5000)}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 7s
+      retries: 3
+    mem_limit: 1024m
+    logging: *logs
+    networks: [frontend]
+  proxy:
+    image: dingjiang-proxy:${DJ_RELEASE_TAG:?Set immutable release tag}
+    build: { context: .., dockerfile: deploy/Dockerfile, target: proxy }
+    restart: unless-stopped
+    environment:
+      DJ_DOMAIN: "${DJ_DOMAIN:?Set domain}"
+      DJ_HTTPS_PORT: "${DJ_HTTPS_PORT:-443}"
+    ports:
+      - "${DJ_HTTP_PORT:-80}:80"
+      - "${DJ_HTTPS_PORT:-443}:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      api: { condition: service_healthy }
+      web: { condition: service_healthy }
+    security_opt: [no-new-privileges:true]
+    logging: *logs
+    mem_limit: 128m
+    networks: [frontend]
+  migrate:
+    image: dingjiang-api:${DJ_RELEASE_TAG:?Set immutable release tag}
+    profiles: [maintenance]
+    init: true
+    environment:
+      <<: *runtime
+      MIGRATION_DATABASE_URL: postgres://postgres:${DJ_DB_ADMIN_PASSWORD:?Set admin password}@db:5432/dingjiang
+      DINGJIANG_BASELINE_MIGRATIONS: ${DINGJIANG_BASELINE_MIGRATIONS:-}
+    entrypoint: ["/usr/local/bin/node", "dist/vs01-db.js", "migrate"]
+    depends_on: { db: { condition: service_healthy } }
+    networks: [backend]
+  admin:
+    image: dingjiang-api:${DJ_RELEASE_TAG:?Set immutable release tag}
+    profiles: [maintenance]
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    environment:
+      <<: *runtime
+      MIGRATION_DATABASE_URL: postgres://postgres:${DJ_DB_ADMIN_PASSWORD:?Set admin password}@db:5432/dingjiang
+    entrypoint: ["/usr/local/bin/node", "dist/identity/identity-cli.js"]
+    networks: [backend, frontend]
+  archive:
+    image: dingjiang-db:${DJ_RELEASE_TAG:?Set immutable release tag}
+    profiles: [maintenance]
+    user: "1000:1000"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    network_mode: none
+    volumes:
+      - materials:/materials
+    entrypoint: ["tar"]
+networks:
+  backend: { internal: true }
+  frontend: {}
+volumes:
+  postgres-data: {}
+  materials: {}
+  web-cache: {}
+  caddy-data: {}
+  caddy-config: {}

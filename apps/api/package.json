@@ -1,0 +1,49 @@
+{
+  "name": "@dingjiang/api",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "dev": "tsx watch src/main.ts",
+    "lint": "eslint --config ../../eslint.config.mjs src",
+    "start": "node dist/main.js",
+    "test": "vitest run",
+    "test:vs05": "vitest run src/vs05.integration.test.ts",
+    "test:vs11": "vitest run src/vs11.integration.test.ts",
+    "test:vs14": "vitest run src/vs14.integration.test.ts",
+    "test:vs14:http": "vitest run src/vs14-http.integration.test.ts",
+    "test:vs15": "vitest run src/vs15.integration.test.ts",
+    "test:vs15:http": "vitest run src/vs15-http.integration.test.ts",
+    "test:vs16": "vitest run src/vs16.integration.test.ts",
+    "test:vs16:http": "vitest run src/vs16-http.integration.test.ts",
+    "test:vs17": "vitest run src/vs17.integration.test.ts",
+    "test:vs17:http": "vitest run src/vs17-http.integration.test.ts",
+    "test:vs18": "vitest run src/vs18.integration.test.ts",
+    "test:vs18:http": "vitest run src/vs18-http.integration.test.ts",
+    "test:integration:http": "vitest run src/integration-http.integration.test.ts",
+    "acceptance:material-fixture": "tsx src/acceptance-fixtures/material-create-acceptance-fixture-cli.ts",
+    "acceptance:material-verification-fixture": "tsx src/acceptance-fixtures/material-verification-acceptance-fixture-cli.ts",
+    "acceptance:evidence-fixture": "tsx src/acceptance-fixtures/evidence-intake-acceptance-fixture-cli.ts",
+    "acceptance:feishu-read": "tsx src/acceptance-fixtures/feishu-review-read-probe.ts",
+    "typecheck": "tsc --noEmit",
+    "db:migrate": "tsx src/vs01-db.ts migrate",
+    "db:seed": "tsx src/vs01-db.ts seed",
+    "db:reset": "tsx src/vs01-db.ts reset",
+    "identity:admin": "tsx src/identity/identity-cli.ts",
+    "test:production": "node ../../scripts/release/run-production-tests.mjs"
+  },
+  "dependencies": {
+    "@dingjiang/contracts": "workspace:*",
+    "@earendil-works/pi-coding-agent": "0.84.2",
+    "@nestjs/common": "11.2.1",
+    "@nestjs/core": "11.2.1",
+    "@nestjs/platform-express": "11.2.1",
+    "@types/pg": "^8.21.0",
+    "pg": "8.20.0",
+    "reflect-metadata": "0.2.2",
+    "rxjs": "7.8.2"
+  },
+  "devDependencies": {
+    "tsx": "4.23.12"
+  }
+}

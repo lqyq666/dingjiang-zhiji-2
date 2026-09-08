@@ -1,0 +1,15 @@
+name: dingjiang-acceptance
+services:
+  db:
+    image: postgres:17.11-bookworm@sha256:051f7b7b3abdd564d5d1bd1e8c4b9c1b6e77087d1dd22020ede611c096a272e0
+    environment:
+      POSTGRES_DB: dingjiang_acceptance
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${DJ_ACCEPTANCE_PASSWORD:?Set a generated acceptance-only password}
+    ports: ["127.0.0.1:15432:5432"]
+    tmpfs: ["/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d dingjiang_acceptance"]
+      interval: 3s
+      timeout: 3s
+      retries: 20

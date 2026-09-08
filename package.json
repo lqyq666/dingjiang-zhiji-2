@@ -1,0 +1,32 @@
+{
+  "name": "dingjiang-zhiji-2",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@11.19.0",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev --parallel",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "feishu:schema:apply": "pnpm --filter @dingjiang/feishu-schema apply",
+    "feishu:schema:plan": "pnpm --filter @dingjiang/feishu-schema plan",
+    "feishu:schema:verify": "pnpm --filter @dingjiang/feishu-schema verify",
+    "lint": "turbo run lint",
+    "test": "turbo run test",
+    "typecheck": "turbo run typecheck"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/node": "26.2.0",
+    "esbuild": "0.28.2",
+    "eslint": "10.8.1",
+    "prettier": "3.9.6",
+    "turbo": "2.10.10",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.67.0",
+    "vitest": "4.1.10"
+  }
+}

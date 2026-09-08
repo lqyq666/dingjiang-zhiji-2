@@ -1,0 +1,17 @@
+{
+  "name": "@dingjiang/feishu-schema",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "apply": "tsx src/cli.ts apply",
+    "build": "tsc -p tsconfig.build.json",
+    "lint": "eslint --config ../../eslint.config.mjs src",
+    "plan": "tsx src/cli.ts plan",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "verify": "tsx src/cli.ts verify"
+  },
+  "devDependencies": {
+    "tsx": "4.23.12"
+  }
+}

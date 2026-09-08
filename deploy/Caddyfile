@@ -1,0 +1,36 @@
+{
+	admin off
+}
+http://{$DJ_DOMAIN} {
+	redir https://{$DJ_DOMAIN}:{$DJ_HTTPS_PORT}{uri} permanent
+}
+https://{$DJ_DOMAIN} {
+	encode zstd gzip
+	header {
+		-Server
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+		X-Frame-Options DENY
+		Content-Security-Policy "frame-ancestors 'none'; object-src 'none'; base-uri 'self'"
+		Strict-Transport-Security "max-age=31536000"
+	}
+	request_body {
+		max_size 8MB
+	}
+	# Disk-writing readiness probes remain internal to the container network.
+	handle /api/health/ready {
+		respond "Not found" 404
+	}
+	handle /api/* {
+		reverse_proxy api:3001 {
+			transport http {
+				dial_timeout 5s
+				response_header_timeout 35s
+			}
+		}
+	}
+	handle {
+		reverse_proxy web:3000
+	}
+	# Intentionally no access-log body / cookie / Authorization capture.
+}

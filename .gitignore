@@ -1,0 +1,55 @@
+# Dependencies and build output
+node_modules/
+.next/
+dist/
+build/
+coverage/
+.turbo/
+.tmp/
+*.tsbuildinfo
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+
+# Supabase local state
+supabase/.temp/
+supabase/.branches/
+
+# Python local state
+.venv/
+.venv-*/
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+services/ml-service/.python-version
+
+# Logs and operating-system files
+*.log
+.DS_Store
+Thumbs.db
+
+# Local Docker data
+.docker-data/
+
+# Local traceable-material content vault
+apps/api/.data/
+
+# Local CodeGraph index
+.codegraph/
+
+# Local WorkBuddy preferences and memories
+.codebuddy/settings.local.json
+CODEBUDDY.local.md
+.codebuddy/CODEBUDDY.local.md
+.workbuddy/
+.feishu-schema/
+
+# Production release secrets and local evidence
+**/.env.production
+**/*.secret.json
+**/.maintenance.lock
+release-artifacts/
+backups/

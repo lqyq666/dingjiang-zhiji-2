@@ -1,0 +1,10 @@
+.next
+.turbo
+coverage
+dist
+node_modules
+pnpm-lock.yaml
+.github/CODEOWNERS
+supabase/.temp
+uv.lock
+handoff/history
