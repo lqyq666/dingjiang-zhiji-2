@@ -1,5 +1,5 @@
-import { expect, it } from "vitest";
-import type { Pool } from "pg";
+import { describe, expect, it, vi } from "vitest";
+import type { Pool, PoolClient } from "pg";
 
 import type { ReadModelService } from "../read-model/read-model-service";
 import { ProjectLifecycleService } from "./project-lifecycle-service";
@@ -415,4 +415,163 @@ it("returns an execution review without unlocking result work", async () => {
   expect(
     statements.some((statement) => statement.includes("RESULT_ACCEPTANCE")),
   ).toBe(false);
+});
+
+/**
+ * `updateSubtask` has the most guards of any command in the state machine.
+ * The cases above cover IN_PROGRESS -> DONE -> READY on the happy path; these
+ * pin the rejection paths and the transaction seam. The seam is what a
+ * refactor breaks quietly: a bound instance runs inside the command kernel's
+ * transaction and must never roll back or release its caller's client.
+ */
+describe("updateSubtask guard rails", () => {
+  const subtaskRow = {
+    subtask_status: "READY",
+    sort_order: 1,
+    node_id: "NODE-1",
+    phase_code: "EXECUTION_CONTROL",
+    origin: "LIVE",
+    owner: "PMC",
+    acceptance: ["口径或范围明确", "输出可追溯"],
+    progress_note: null,
+    progress_output_reference: null,
+    progress_updated_at: null,
+    completion_note: "",
+    output_reference: null,
+    output_source_object_id: null,
+    output_source_version_id: null,
+    completion_basis: null,
+    confirmed_by: null,
+    confirmed_at: null,
+    confirmed_acceptance: null,
+    completed_at: null,
+    project_id: "PRJ-OTD-001",
+    project_status: "RUNNING",
+    root_gate_status: "APPROVED",
+  };
+
+  const harness = (row: Record<string, unknown> | null) => {
+    const statements: string[] = [];
+    const release = vi.fn();
+    const client = {
+      query: async (statement: string) => {
+        statements.push(statement);
+        if (statement.startsWith("SELECT s.status AS subtask_status"))
+          return { rows: row ? [row] : [], rowCount: row ? 1 : 0 };
+        return { rows: [], rowCount: 0 };
+      },
+      release,
+    };
+    const pool = { connect: async () => client } as unknown as Pool;
+    return { statements, release, client, pool };
+  };
+
+  const serviceFor = (pool: Pool, commandTransaction?: PoolClient) =>
+    new ProjectLifecycleService(
+      pool,
+      tenantId,
+      {} as unknown as ReadModelService,
+      commandTransaction,
+    );
+
+  const inProgress = {
+    actor: "PMC",
+    status: "IN_PROGRESS",
+    note: "核对中",
+    outputReference: "",
+  };
+  const done = {
+    actor: "PMC",
+    status: "DONE",
+    note: "已完成",
+    outputReference: "分类清单 v1",
+    confirmedAcceptanceCriteria: ["口径或范围明确", "输出可追溯"],
+  };
+
+  it("rejects malformed input before touching the database", async () => {
+    const { pool, statements } = harness(null);
+
+    await expect(
+      serviceFor(pool).updateSubtask("SUB-1", {
+        actor: "PMC",
+        status: "UNKNOWN",
+      }),
+    ).rejects.toMatchObject({ message: "无效的子任务更新" });
+    expect(statements).toEqual([]);
+  });
+
+  it("rolls back and releases when the subtask does not exist", async () => {
+    const { pool, statements, release } = harness(null);
+
+    await expect(
+      serviceFor(pool).updateSubtask("SUB-MISSING", inProgress),
+    ).rejects.toMatchObject({ message: "项目子任务不存在" });
+
+    expect(statements).toEqual([
+      "BEGIN",
+      expect.stringContaining("SELECT s.status AS subtask_status"),
+      "ROLLBACK",
+    ]);
+    expect(
+      statements.some(
+        (statement) =>
+          statement.startsWith("UPDATE") || statement.startsWith("INSERT"),
+      ),
+    ).toBe(false);
+    expect(release).toHaveBeenCalledOnce();
+  });
+
+  it("refuses to operate on a historical or out-of-phase subtask", async () => {
+    const { pool, statements } = harness({
+      ...subtaskRow,
+      origin: "HISTORICAL",
+    });
+
+    await expect(
+      serviceFor(pool).updateSubtask("SUB-1", inProgress),
+    ).rejects.toMatchObject({
+      message: "只能操作当前已解锁节点的小任务",
+    });
+    expect(statements).toContain("ROLLBACK");
+    expect(statements).not.toContain("COMMIT");
+  });
+
+  it("refuses a completion from anyone but the task owner", async () => {
+    const { pool } = harness({ ...subtaskRow, owner: "OWNER" });
+
+    await expect(
+      serviceFor(pool).updateSubtask("SUB-1", done),
+    ).rejects.toMatchObject({
+      message: "只有本事项责任人可以确认完成",
+    });
+  });
+
+  it("requires every acceptance criterion before a completion", async () => {
+    const { pool } = harness(subtaskRow);
+
+    await expect(
+      serviceFor(pool).updateSubtask("SUB-1", {
+        ...done,
+        confirmedAcceptanceCriteria: ["口径或范围明确"],
+      }),
+    ).rejects.toMatchObject({
+      message: "必须逐项确认本事项全部验收标准",
+    });
+  });
+
+  it("never rolls back or releases a caller-owned transaction client", async () => {
+    const { client, statements, release } = harness(null);
+
+    await expect(
+      serviceFor(
+        {} as unknown as Pool,
+        client as unknown as PoolClient,
+      ).updateSubtask("SUB-MISSING", inProgress),
+    ).rejects.toMatchObject({ message: "项目子任务不存在" });
+
+    expect(statements).toEqual([
+      expect.stringContaining("SELECT s.status AS subtask_status"),
+    ]);
+    expect(release).not.toHaveBeenCalled();
+  });
 });

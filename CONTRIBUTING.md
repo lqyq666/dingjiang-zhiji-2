@@ -59,7 +59,7 @@ pnpm test:coverage       # 覆盖率（针对真实 PostgreSQL，不是单元层
 ## 架构约束（会被 CI 拦住）
 
 - **依赖方向**：Web 与 MCP 适配层不得 import API 实现或数据库驱动；`packages/contracts` 不得依赖实现；API 不得反向依赖入口层。规则在 `.dependency-cruiser.cjs`。
-- **文件尺寸**：`apps/api/src/vs01.service.ts` 仍在承担多个上下文，`tooling/architecture/boundaries.test.ts` 的尺寸棘轮守着它不许再长大。**新逻辑请放进 `apps/api/src/<context>/` 下的独立模块。**
+- **门面只做委托**：`apps/api/src/vs01.service.ts` 已经拆成一层门面，六个上下文各在 `apps/api/src/<context>/` 下。`boundaries.test.ts` 的尺寸棘轮守着它不许再长大，`facade.test.ts` 守着方法体不许直接写 SQL 或领域逻辑。**新逻辑请放进对应的独立模块。**
 - **接口面**：新增或删除路由后要跑 `pnpm docs:api-surface`，否则守卫测试会红。
 - **许可证**：`LICENSE` 是 apache.org 的官方原文，`tooling/architecture/licence.test.ts` 用 sha256 钉住了它，不要改。
 

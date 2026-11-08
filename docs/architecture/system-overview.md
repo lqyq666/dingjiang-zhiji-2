@@ -162,7 +162,7 @@ KNOWLEDGE_CAPTURE       经验沉淀    ── 经验候选 → 专家审核 →
 
 ## 8. 已知的架构债务（不美化）
 
-### 8.1 `apps/api/src/vs01.service.ts`：423 行、一个门面
+### 8.1 `apps/api/src/vs01.service.ts`：416 行、一个门面
 
 它曾经是全仓库最大的单点问题：5261 行、94 个方法、六个上下文混在一个类里。现在它是一层门面——保留所有对外方法签名，把实现交给六个各自负责的服务：
 
@@ -188,9 +188,11 @@ KNOWLEDGE_CAPTURE       经验沉淀    ── 经验候选 → 专家审核 →
 
 三方共享的写原语（追加项目事件、锁定项目节点、校验操作者）抽到 `projects/project-primitives.ts`；七个阶段的名字、目的与模板抽到 `work-stages.ts`；两个跨读写共用的投影抽到 `read-model/projections.ts`。都是普通函数或常量，两侧共同 import，不复制。
 
+两处纯构造随后也各归其位，**判据是方法体零 `this` 引用**，因此是整体搬移而非改写：503 行的任务模板表从项目状态机移到 `projects/task-templates.ts`，类内只留同名薄委托以保住既有调用与测试；读模型的任务情景目录、证据记录、候选视图与输入要求映射移到 `read-model/projections.ts`，调用点改为 import 同名函数（`evidence` 因与局部变量重名而用 `buildEvidence` 别名）。状态机 1812 → 1304 行，读模型 1144 → 959 行，公共方法签名与返回类型不变。
+
 同时删掉了 `projectTransition`（生产零调用、只有测试在测的死代码）以及 `date` / `delay` 两个只是 `isoDate` / `delayDays` 的薄包装。
 
-`tooling/architecture/boundaries.test.ts` 的尺寸棘轮守着这个文件不许再长大，预算随每次拆分同步下调（5261 → 4888 → 4642 → 3560 → 1779 → 423）。
+`tooling/architecture/boundaries.test.ts` 的尺寸棘轮守着这个文件不许再长大，预算随每次拆分同步下调（5261 → 4888 → 4642 → 3560 → 1779 → 423 → 416）。`tooling/architecture/facade.test.ts` 另外盯着方法体：除启动检查外，门面方法只能委托给六个服务，不得直接执行 SQL 或就地写领域逻辑；`documentation.test.ts` 则把这里的行数与代码、棘轮预算三者钉在一起。
 
 ### 8.2 其他已记录的债务
 

@@ -47,7 +47,7 @@
 - Coze：`COZE_API_TOKEN`、`COZE_EXTRACT_WORKFLOW_ID`、`COZE_PUBLISH_WORKFLOW_ID`、`COZE_ANSWER_WORKFLOW_ID`。
 - 飞书：`FEISHU_APP_ID`、`FEISHU_APP_SECRET`、`FEISHU_BASE_APP_TOKEN`、`FEISHU_REVIEW_TABLE_ID`，并将应用加入目标多维表格的协作者。
 
-不要将这些值发送给 Codex。真实最终验收至少执行一次 Coze Extract 或 Answer，以及一次飞书候选 push、人工审核与 pull。记录脱敏界面及重新读取的本地状态；不得把 HTTP 200、外部工作流完成或单页显示当作整体最终验收。
+不要将这些值提交到仓库、贴进对话或外发给第三方。真实最终验收至少执行一次 Coze Extract 或 Answer，以及一次飞书候选 push、人工审核与 pull。记录脱敏界面及重新读取的本地状态；不得把 HTTP 200、外部工作流完成或单页显示当作整体最终验收。
 
 ## 已知限制
 

@@ -14,7 +14,7 @@
 
 <!--
 贴出实际跑出来的结果，不要写"已测试通过"这种话。
-例如：pnpm verify exit 0；252 用例 0 跳过；tier1 231 / 6 / 6 / 5 / 4。
+例如：pnpm verify exit 0；260 用例 0 跳过；tier1 239 / 6 / 6 / 5 / 4。
 -->
 
 | 门禁                                | 结果 | 证据 |
@@ -56,6 +56,6 @@
 - [ ] 没有直接推送或强推到 `main`。
 - [ ] 数据库变更只新增了迁移，没有修改已发布的迁移文件。
 - [ ] 新增租户相关表开了 `FORCE ROW LEVEL SECURITY`。
-- [ ] `apps/api/src/vs01.service.ts` 没有变大（尺寸棘轮），新逻辑放在了 `apps/api/src/<context>/` 下。
+- [ ] `apps/api/src/vs01.service.ts` 没有变大（尺寸棘轮）、方法仍只做委托（`facade.test.ts`），新逻辑放在了 `apps/api/src/<context>/` 下。
 - [ ] `LICENSE` 未被修改（其 sha256 被测试钉住）。
 - [ ] CI 通过只作为验证证据陈述，不当作产品验收。

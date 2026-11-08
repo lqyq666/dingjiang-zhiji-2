@@ -1,6 +1,8 @@
+import { execFile } from "node:child_process";
 import { existsSync, statSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { dirname, extname, join, relative, resolve, sep } from "node:path";
+import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 
 const repositoryRoot = resolve(process.cwd(), "../..");
@@ -312,5 +314,121 @@ describe("documented commands exist", () => {
       "文档里的数量与代码不一致。请改文档，别改数字了事。\n" +
         mismatched.join("\n"),
     ).toEqual([]);
+  });
+
+  it("keeps the facade line count in step with the code and the ratchet", async () => {
+    // Three places state how big the facade is: the file itself, the
+    // architecture note (heading and ratchet history), and the growth ratchet
+    // in boundaries.test.ts. All three were written by hand, so all three can
+    // drift. Derive the truth from the file and hold them to it.
+    const facade = await readFile(
+      join(repositoryRoot, "apps/api/src/vs01.service.ts"),
+      "utf8",
+    );
+    const actualLines = facade.split("\n").length - 1;
+
+    const overview = await readFile(
+      join(repositoryRoot, "docs/architecture/system-overview.md"),
+      "utf8",
+    );
+    const mismatched: string[] = [];
+    const check = (label: string, stated: string | undefined): void => {
+      if (stated === undefined) {
+        mismatched.push(`${label}: 找不到门面行数的声明`);
+      } else if (Number(stated) !== actualLines) {
+        mismatched.push(
+          `${label}: 写着 ${stated} 行，apps/api/src/vs01.service.ts 实际是 ${actualLines} 行`,
+        );
+      }
+    };
+
+    check(
+      "docs/architecture/system-overview.md 8.1 标题",
+      overview.match(/vs01\.service\.ts`[：:]\s*(\d+)\s*行/)?.[1],
+    );
+    check(
+      "docs/architecture/system-overview.md 棘轮历史末项",
+      overview
+        .match(/预算随每次拆分同步下调（([^）]+)）/)?.[1]
+        ?.split("→")
+        .pop()
+        ?.trim(),
+    );
+
+    const ratchet = await readFile(
+      join(repositoryRoot, "tooling/architecture/boundaries.test.ts"),
+      "utf8",
+    );
+    check(
+      "tooling/architecture/boundaries.test.ts 预算",
+      ratchet.match(/const budget = (\d+);/)?.[1],
+    );
+
+    expect(
+      mismatched,
+      "门面行数在代码、文档与尺寸棘轮之间对不上了。\n" + mismatched.join("\n"),
+    ).toEqual([]);
+  });
+
+  it("keeps the dependency graph counts in the README honest", async () => {
+    // Run the same analyzer CI runs, but ask for JSON. A README quoting
+    // yesterday's graph size is worse than one quoting no size at all.
+    const { stdout } = await promisify(execFile)(
+      process.execPath,
+      [
+        join(
+          repositoryRoot,
+          "node_modules/dependency-cruiser/bin/dependency-cruiser.mjs",
+        ),
+        "apps",
+        "packages",
+        "services",
+        "tooling",
+        "--config",
+        ".dependency-cruiser.cjs",
+        "--output-type",
+        "json",
+      ],
+      { cwd: repositoryRoot, maxBuffer: 16 * 1024 * 1024 },
+    );
+    const graph = JSON.parse(stdout) as {
+      modules: Array<{ dependencies?: unknown[] }>;
+    };
+    const modules = graph.modules.length;
+    const dependencies = graph.modules.reduce(
+      (total, module) => total + (module.dependencies?.length ?? 0),
+      0,
+    );
+    expect(modules, "依赖分析器没有扫到任何模块，守卫会空转").toBeGreaterThan(
+      0,
+    );
+
+    const readme = await readFile(join(repositoryRoot, "README.md"), "utf8");
+    const stated = readme.match(/当前扫描 (\d+) 个模块、(\d+) 条依赖/);
+    expect(
+      stated?.[1],
+      `README 里的模块数与实际依赖图不符：实际 ${modules} 个模块`,
+    ).toBe(String(modules));
+    expect(
+      stated?.[2],
+      `README 里的依赖数与实际依赖图不符：实际 ${dependencies} 条依赖`,
+    ).toBe(String(dependencies));
+  });
+
+  it("keeps the documented switch count in step with the orchestrator", async () => {
+    const suite = await readFile(
+      join(repositoryRoot, "scripts/testing/run-integration-suite.mjs"),
+      "utf8",
+    );
+    const block = suite.match(/const switches = \{[\s\S]*?\n\};/)?.[0] ?? "";
+    const actual = (block.match(/_INTEGRATION:/g) ?? []).length;
+    expect(actual, "没解析到任何开关，守卫会空转").toBeGreaterThan(0);
+
+    const readme = await readFile(join(repositoryRoot, "README.md"), "utf8");
+    const stated = readme.match(/(\d+) 个开关全开/)?.[1];
+    expect(
+      stated,
+      `README 说 ${stated} 个开关，编排脚本里实际有 ${actual} 个`,
+    ).toBe(String(actual));
   });
 });

@@ -2,7 +2,7 @@
 /**
  * Full integration suite orchestrator.
  *
- * The repository ships ~90 database-backed tests behind `*_INTEGRATION=1`
+ * The repository ships over 100 database-backed tests behind `*_INTEGRATION=1`
  * switches, and three of them refuse to run against the shared dev database
  * because they reset it. Running them all used to require knowing which switch
  * belongs to which file, which database name each refuses to run without, and

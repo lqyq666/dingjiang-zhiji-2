@@ -198,19 +198,20 @@ describe("architecture boundaries", () => {
 });
 
 /**
- * Size ratchet for the one file that is already a known problem.
+ * Size ratchet for the facade.
  *
- * `apps/api/src/vs01.service.ts` is now a facade over six services.
- * Splitting it is a real refactor that needs its own change window; until that
- * happens, the file must not quietly keep growing. A ratchet says "do not make
- * it worse", which is a weaker promise than "make it good" but a keepable one.
+ * `apps/api/src/vs01.service.ts` used to be a 5261-line class holding six
+ * contexts. It is now a thin facade that only assembles collaborators and
+ * delegates to them. The split is done; this test keeps the facade from
+ * quietly growing back into the domain service it replaced.
  *
- * If a change genuinely belongs in this file, raising the number is allowed —
- * in its own commit, with the reason. That is the friction this test exists to
- * create.
+ * If a change genuinely belongs here, raising the number is allowed — in its
+ * own commit, with the reason, and with the matching number in
+ * docs/architecture/system-overview.md. That is the friction this test exists
+ * to create.
  */
 describe("growth ratchet", () => {
-  const budget = 423;
+  const budget = 416;
 
   it("keeps vs01.service.ts from absorbing more responsibilities", async () => {
     const file = resolve(repositoryRoot, "apps/api/src/vs01.service.ts");
@@ -218,9 +219,10 @@ describe("growth ratchet", () => {
     expect(
       lines,
       `apps/api/src/vs01.service.ts 已从 ${budget} 行增长到 ${lines} 行。` +
-        `它同时承担任务接入、材料、项目状态机、AI 助手、经验资产与读模型六个上下文，` +
-        `继续变大只会让改动风险线性上升。新逻辑请放进 apps/api/src/<context>/ 下的独立模块；` +
-        `确实必须写在这里时，请在本测试里同步调整预算，并在提交信息里说明理由。`,
+        `它是一层门面：任务接入、材料、项目状态机、AI 助手、经验资产与读模型六个上下文` +
+        `分别住在 apps/api/src/<context>/ 下，新逻辑应放进各自的独立模块。` +
+        `确实必须写在这里时，请同步调整本测试的预算与 docs/architecture/system-overview.md 的行数，` +
+        `并在提交信息里说明理由。`,
     ).toBeLessThanOrEqual(budget);
   });
 });

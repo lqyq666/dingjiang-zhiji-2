@@ -192,3 +192,60 @@ describe("material situation projection", () => {
     expect(materialSituationForInput("原因证据链")).toBeNull();
   });
 });
+
+/**
+ * `findProject` is the biggest read in this service: eight queries plus the
+ * projection behind every project screen. The happy path is covered by the
+ * integration suite against a real database; these cases pin the invariants
+ * that are easy to lose in a refactor - early exit, tenant scoping, and the
+ * keys the child reads join on - without needing a database at all.
+ */
+describe("project read path", () => {
+  const projectRow = {
+    node_id: "NODE-1",
+    source_task_id: "SO-202608128",
+  };
+
+  it("stops after the first read when the project does not exist", async () => {
+    const query = vi.fn(async (statement: string, values?: unknown[]) => {
+      expect(statement).toContain("p.tenant_id = $2");
+      expect(values).toEqual(["PRJ-MISSING", tenantId]);
+      return { rows: [], rowCount: 0 };
+    });
+    const service = readModel(query);
+
+    await expect(service.project("PRJ-MISSING")).rejects.toMatchObject({
+      message: "项目不存在",
+    });
+    expect(query).toHaveBeenCalledOnce();
+  });
+
+  it("scopes all seven child reads to the tenant and joins them on the right keys", async () => {
+    const calls: Array<{ statement: string; values?: unknown[] }> = [];
+    const query = vi.fn(async (statement: string, values?: unknown[]) => {
+      calls.push({ statement, values });
+      if (statement.startsWith("SELECT p.id, p.source_task_id"))
+        return { rows: [projectRow], rowCount: 1 };
+      return { rows: [], rowCount: 0 };
+    });
+    const service = readModel(query);
+
+    // With no EXECUTION_CONTROL phase the projection fails before
+    // projectSchema.parse, so all seven child reads have already run.
+    await expect(service.project("PRJ-1")).rejects.toMatchObject({
+      message: "执行节点不存在",
+    });
+
+    expect(calls).toHaveLength(7);
+    for (const call of calls) {
+      expect(call.statement).toContain("tenant_id");
+      expect(call.values).toContain(tenantId);
+    }
+    // Subtasks join on the node, but materials and experience references
+    // belong to the source task, not to the project. Getting either wrong
+    // silently drops evidence from the read model.
+    expect(calls[2]?.values?.[0]).toBe("NODE-1");
+    expect(calls[5]?.values?.[0]).toBe("SO-202608128");
+    expect(calls[6]?.values?.[0]).toBe("SO-202608128");
+  });
+});

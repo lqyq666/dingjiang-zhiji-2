@@ -18,7 +18,6 @@ import { Injectable } from "@nestjs/common";
 import type { OnModuleDestroy, OnModuleInit } from "@nestjs/common";
 import type { Pool, PoolClient } from "pg";
 
-import {} from "./assistant/guided-analysis";
 import {
   assertDatabaseReady,
   createPool,
@@ -32,8 +31,6 @@ import { assertProjectAction } from "./projects/project-primitives";
 import { ReadModelService } from "./read-model/read-model-service";
 import { AssistantService } from "./assistant/assistant-service";
 import { TaskDecisionService } from "./tasks/task-decision-service";
-import {} from "./intake/source-facts";
-import {} from "./projects/production-lifecycle";
 import {
   MaterialContentVault,
   type MaterialContentStore,
@@ -415,9 +412,5 @@ export class Vs01Service implements OnModuleInit, OnModuleDestroy {
     assertProjectAction(input, "PMC");
     await resetAndSeed(this.pool);
     return this.employee();
-  }
-
-  private sourceTaskSuffix(sourceTaskId: string): string {
-    return sourceTaskId.replace(/^SO-/, "");
   }
 }
