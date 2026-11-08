@@ -139,14 +139,19 @@ MCP 工具面除参数 schema 外还声明 `annotations`（读写、破坏性、
 
 ## 延伸阅读
 
-| 文档                                       | 内容                                                               |
-| ------------------------------------------ | ------------------------------------------------------------------ |
-| [CONTEXT.md](CONTEXT.md)                   | 领域词汇表：经营问题、咨询任务、工作步骤、执行事项、工作上下文快照 |
-| [PRODUCT.md](PRODUCT.md)                   | 产品定位、角色与业务目标                                           |
-| [DESIGN.md](DESIGN.md)                     | Web 端设计系统：OKLCH 色板、层级与排版规则                         |
-| [docs/architecture/](docs/architecture/)   | 系统全景、系统不变量、集成就绪度与各子系统边界                     |
-| [docs/api-surface.md](docs/api-surface.md) | 全部 85 条 HTTP 路由（自动生成，带防漂移守卫）                     |
-| [CONTRIBUTING.md](CONTRIBUTING.md)         | 怎么跑起来、改动要过哪些门禁、提交信息怎么写                       |
+| 文档                                               | 内容                                                               |
+| -------------------------------------------------- | ------------------------------------------------------------------ |
+| [CONTEXT.md](CONTEXT.md)                           | 领域词汇表：经营问题、咨询任务、工作步骤、执行事项、工作上下文快照 |
+| [PRODUCT.md](PRODUCT.md)                           | 产品定位、角色与业务目标                                           |
+| [DESIGN.md](DESIGN.md)                             | Web 端设计系统：OKLCH 色板、层级与排版规则                         |
+| [docs/architecture/](docs/architecture/)           | 系统全景、系统不变量、集成就绪度与各子系统边界                     |
+| [docs/api-surface.md](docs/api-surface.md)         | 全部 85 条 HTTP 路由（自动生成，带防漂移守卫）                     |
+| [docs/research/](docs/research/)                   | 前期调研：顾问工作方法、绩效顾问工作流、界面工作流研究             |
+| [docs/product/](docs/product/)                     | 前端 POC 蓝图与视觉资产                                            |
+| [docs/demo/](docs/demo/)                           | 演示脚本：经验智能这一段的完整走查                                 |
+| [docs/evals/](docs/evals/)                         | 模型侧评测：候选模型的边界验证与是否放行的结论                     |
+| [docs/vertical-slice-01/](docs/vertical-slice-01/) | 最早的垂直切片契约与验收（历史记录，当前口径已由后续切片覆盖）     |
+| [CONTRIBUTING.md](CONTRIBUTING.md)                 | 怎么跑起来、改动要过哪些门禁、提交信息怎么写                       |
 
 ## 开源状态
 
