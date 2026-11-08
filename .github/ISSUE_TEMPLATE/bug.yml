@@ -1,40 +1,63 @@
 name: Bug report
-description: Record a reproducible defect without expanding implementation scope.
+description: Describe a defect you can reproduce.
 title: "[Bug] "
 body:
   - type: textarea
     id: observed
     attributes:
-      label: Observed behavior
+      label: What actually happens
+      description: What you saw, including the error message if there was one.
     validations:
       required: true
   - type: textarea
     id: expected
     attributes:
-      label: Expected behavior
+      label: What you expected instead
     validations:
       required: true
   - type: textarea
     id: reproduction
     attributes:
-      label: Minimal reproduction and evidence
-      description: Include commands and sanitized output; never paste secrets or production data.
+      label: Minimal reproduction
+      description: >
+        The commands you ran and the output you saw, with secrets and real
+        data removed. A failing test or a failing command is ideal.
     validations:
       required: true
   - type: textarea
     id: impact
     attributes:
       label: Impact and affected scope
+      description: Which part of the system is affected, and how badly.
     validations:
       required: true
   - type: dropdown
     id: severity
     attributes:
-      label: Initial severity
+      label: How bad is it
       options:
-        - BLOCKER
-        - HIGH
-        - MEDIUM
-        - LOW
+        - Critical - data loss, tenant isolation broken, or the system does not start
+        - High - a documented invariant no longer holds
+        - Medium - a real defect with a workaround
+        - Low - cosmetic or minor
+        - Not sure yet
     validations:
       required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: >
+        Node version, pnpm version, PostgreSQL version, and whether you used
+        the demo seed data or your own.
+    validations:
+      required: false
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Before submitting
+      options:
+        - label: I removed secrets, tokens and any real customer data from the report.
+          required: true
+        - label: I checked that this is not a security vulnerability, which has its own private reporting channel.
+          required: true

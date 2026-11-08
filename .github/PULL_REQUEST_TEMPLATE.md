@@ -1,41 +1,61 @@
-## Task Contract
+## 改了什么
 
-- Issue:
-- Contract path:
-- Base commit:
-- Head commit:
+<!-- 一句话说明。参考既有提交信息的写法：先说结论，再说为什么。 -->
 
-## Outcome and scope
+## 为什么
 
-- Required outcome:
-- Exact changed paths:
-- Out-of-scope paths verified unchanged:
+<!--
+这是这个 PR 最该被认真读的部分。
+当时面临哪些问题？有哪些选项？为什么选了这个？
+如果和 README、docs/adr/ 里的既有决定冲突，请说明理由。
+-->
 
-## Evidence
+## 怎么验证的
 
-| Gate                        | Result | Evidence |
-| --------------------------- | ------ | -------- |
-| `pnpm control-plane:check`  |        |          |
-| `pnpm lint`                 |        |          |
-| `pnpm typecheck`            |        |          |
-| `pnpm test`                 |        |          |
-| `pnpm build`                |        |          |
-| `pnpm format:check:changed` |        |          |
-| Runtime/acceptance          |        |          |
+<!--
+贴出实际跑出来的结果，不要写"已测试通过"这种话。
+例如：pnpm verify exit 0；252 用例 0 跳过；tier1 231 / 6 / 6 / 5 / 4。
+-->
 
-## Risk and external actions
+| 门禁                                | 结果 | 证据 |
+| ----------------------------------- | ---- | ---- |
+| `pnpm depcruise`                    |      |      |
+| `pnpm lint`                         |      |      |
+| `pnpm typecheck`                    |      |      |
+| `pnpm test`                         |      |      |
+| `pnpm build`                        |      |      |
+| `pnpm --filter @dingjiang/mcp eval` |      |      |
+| `pnpm test:integration`             |      |      |
+| `pnpm format:check`                 |      |      |
 
-- Authorization/tenant/data-integrity impact:
-- Migration and rollback:
-- External actions executed:
-- External actions explicitly not executed:
+需要时另附：
 
-## Review checklist
+- [ ] `pnpm test:coverage` 通过（涉及业务逻辑改动时）
+- [ ] `pnpm docs:api-surface` 已重新生成（新增或删除了路由时）
+- [ ] `pnpm bench:read-path` 跑过（涉及读路径或索引时）
 
-- [ ] Task Contract is frozen and this diff stays within its allowed paths.
-- [ ] Facts, inference, assumptions and open questions are distinguished where material.
-- [ ] No literal secret appears in source, logs, evidence, Issue or PR text.
-- [ ] No direct or force push to `main` was used.
-- [ ] Production deployment, production data and production authentication actions are explicitly recorded with their recovery evidence.
-- [ ] BLOCKER/HIGH findings have completed no more than two automatic repair loops; only genuine strategic or hard-safety decisions are escalated.
-- [ ] CI success is reported as validation, not as product or business final acceptance.
+## 破坏性变更
+
+<!--
+有无数据库迁移、需不需要重新生成文档、接口面有无变化、部署方要不要额外操作。
+没有就写"无"。
+-->
+
+## 风险与外部动作
+
+- 授权 / 租户 / 数据完整性影响：
+- 迁移与回滚方式：
+- 执行过的外部动作：
+- 明确**没有**执行的外部动作：
+
+## 评审清单
+
+- [ ] 变更范围与本 PR 的目标一致，没有夹带无关改动。
+- [ ] 事实、推断、假设与未决问题在该区分的地方区分开了。
+- [ ] 源码、日志、证据与 PR 描述里没有出现任何字面量密钥。
+- [ ] 没有直接推送或强推到 `main`。
+- [ ] 数据库变更只新增了迁移，没有修改已发布的迁移文件。
+- [ ] 新增租户相关表开了 `FORCE ROW LEVEL SECURITY`。
+- [ ] `apps/api/src/vs01.service.ts` 没有变大（尺寸棘轮），新逻辑放在了 `apps/api/src/<context>/` 下。
+- [ ] `LICENSE` 未被修改（其 sha256 被测试钉住）。
+- [ ] CI 通过只作为验证证据陈述，不当作产品验收。

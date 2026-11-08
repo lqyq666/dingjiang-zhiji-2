@@ -1,2 +1,3 @@
-# Routine code review is performed by Codex's Standards + Spec review loop.
-# Founder escalation is reserved for strategic or hard-safety decisions.
+# 常规评审由仓库所有者执行。
+# 架构级取舍（新增/推翻 docs/adr/ 里的决定）需要额外讨论。
+* @lqyq666

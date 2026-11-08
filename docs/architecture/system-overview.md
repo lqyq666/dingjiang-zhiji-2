@@ -188,7 +188,7 @@ KNOWLEDGE_CAPTURE       经验沉淀    ── 经验候选 → 专家审核 →
 ### 8.2 其他已记录的债务
 
 - **迁移校验和不可回改**：已发布的迁移一旦发布，任何字符改动都会导致启动失败。这是刻意的（防静默改历史），代价是修正只能新增迁移。
-- **迁移文件被重写会让本地活库与新部署分叉**：本仓库历史上有两个迁移文件被重写过（旧的 ERP 拉取与 WPS 投影），长期使用的本地库因此多出五张代码零引用的表，而全新部署不会有——两边结构悄悄分开了。现在 `migrate` 会检查 `schema_migrations` 里是否存在仓库中已不存在的迁移并拒绝启动，`pnpm db:reset` 改为重建 schema 而不是只清数据，用来修复这类漂移。
+- **迁移文件被重写会让本地活库与新部署分叉**：本仓库历史上有两个迁移文件被重写过（旧的 ERP 拉取与 WPS 投影），长期使用的本地库因此多出五张代码零引用的表，而全新部署不会有——两边结构悄悄分开了。现在 `migrate` 会检查 `schema_migrations` 里是否存在仓库中已不存在的迁移并拒绝启动，`pnpm --filter @dingjiang/api db:reset` 改为重建 schema 而不是只清数据，用来修复这类漂移。
 - **重建 schema 会丢掉默认权限**：`CREATE SCHEMA public` 不等于 PostgreSQL 初始化时那个 public schema——后者带 `GRANT USAGE ... TO PUBLIC`，重建的那个不带。少了这条，运行时角色看不见任何表，报出来的是"relation does not exist"，而不是本该报的权限错误，排查方向会被完全带偏。`db:reset` 现在会显式补回这条授权并把 schema 的 owner 交回 `pg_database_owner`。
 - **`~/.workbuddy/mcp.json` 里 `DINGJIANG_MCP_API_TOKEN` 是明文**：本机配置文件，不在仓库内，但仍是待处理项。
 - **没有浏览器级 e2e**：判据取舍见 `README.md` tier5 一节。当前用数据层直驱覆盖契约，不覆盖渲染。

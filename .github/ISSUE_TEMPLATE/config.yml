@@ -1,2 +1,5 @@
-blank_issues_enabled: false
-contact_links: []
+blank_issues_enabled: true
+contact_links:
+  - name: 安全漏洞（请勿开公开 issue）
+    url: https://github.com/lqyq666/dingjiang-zhiji-2/security/advisories/new
+    about: 请走私密漏洞报告通道，公开 issue 会让漏洞细节在修复前扩散。
