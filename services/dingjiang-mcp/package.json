@@ -5,6 +5,7 @@
   "main": "dist/server.js",
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
+    "eval": "node evals/run.mjs",
     "lint": "eslint --config ../../eslint.config.mjs src",
     "start": "node dist/server.js",
     "test": "vitest run",

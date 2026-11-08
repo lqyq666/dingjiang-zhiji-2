@@ -34,5 +34,6 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm build
+      - run: pnpm --filter @dingjiang/mcp eval
       - run: pnpm format:check
       - run: docker compose config

@@ -36,11 +36,14 @@ describe("validateIntegrationBaseUrl", () => {
     "http://127.0.0.1:3001/",
     "http://127.0.0.1:3001/api/v2",
     "https://dingjiang.example.com/",
-  ])("rejects credentials, query, fragment and unexpected paths: %s", (value) => {
-    expect(() => validateIntegrationBaseUrl(value)).toThrow(
-      "仅允许 HTTPS /api，或本机 HTTP /api",
-    );
-  });
+  ])(
+    "rejects credentials, query, fragment and unexpected paths: %s",
+    (value) => {
+      expect(() => validateIntegrationBaseUrl(value)).toThrow(
+        "仅允许 HTTPS /api，或本机 HTTP /api",
+      );
+    },
+  );
 
   it("rejects malformed URLs and out-of-range octets", () => {
     expect(() => validateIntegrationBaseUrl("not a url")).toThrow(

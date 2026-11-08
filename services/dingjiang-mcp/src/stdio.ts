@@ -4,9 +4,7 @@ export type StdioHandler = (
   request: JsonRpcRequest,
 ) => Promise<JsonRpcResponse | undefined>;
 
-export type StdioResponder = (
-  payload: JsonRpcResponse,
-) => void | Promise<void>;
+export type StdioResponder = (payload: JsonRpcResponse) => void | Promise<void>;
 
 export type StdioDispatcher = ((line: string) => void) & {
   /** Resolves after every line accepted so far has been fully answered. */

@@ -44,6 +44,17 @@ Integration client 将失败分为三类，避免把服务端问题误报为调�
 
 `DINGJIANG_MCP_TIMEOUT_MS` 配置请求超时（默认 10000，范围 100–120000）。超时错误仍要求复用原 requestId / correlationId 核对，不得改 requestId 重试。`DINGJIANG_API_BASE_URL` 的校验结果按原始值缓存，环境变量变化时立即重新校验；loopback HTTP 覆盖完整 `127.0.0.0/8`，并拒绝 `127.0.0.1.evil.com` 这类伪装主机。
 
+## 工具契约评测
+
+`evals/` 提供可回归的契约评测，直接驱动 `dist/` 中的真实 dispatcher，Integration 侧使用确定性 mock，不依赖网络、数据库或模型凭据：
+
+```bash
+pnpm --filter @dingjiang/mcp build
+pnpm --filter @dingjiang/mcp eval
+```
+
+当前基线：声明的 28 个工具全部可达（无 `UNKNOWN_TOOL`）；24 个读写 happy path 返回 `structuredContent` 并命中预期 Integration 方法；7 类越权字段注入全部 `INVALID_REQUEST` 且零 Integration 调用；6 类非法参数全部被拒；传输超时结构化收敛且不泄露授权头；6 项协议契约通过。任一不变量失败时退出码为 1，CI 会阻断合并。用例格式与扩展方式见 `evals/README.md`。
+
 ## 工具边界
 
 默认读取：`workspace.resume`、`workspace.events`、`work.context`、`work.operations`、`evidence.bundle`、`experience.search`、`project.next_action`。

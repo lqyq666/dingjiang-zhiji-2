@@ -1011,6 +1011,46 @@ const callTool = async (client: IntegrationClient, params: unknown) => {
   }
 };
 
+/**
+ * Tool names the dispatcher actually implements.
+ *
+ * Tool schemas live in `businessTools` / `compatibilityTools`, while dispatch
+ * lives in `callTool`'s switch; the two can drift silently when a tool is added
+ * to one side only. `tool-contract.test.ts` asserts this set and the declared
+ * schemas are identical in both directions, and that every declared tool
+ * reaches its implementation instead of `UNKNOWN_TOOL`.
+ */
+export const dispatchedToolNames: ReadonlySet<string> = new Set([
+  "workspace.events",
+  "work.operations",
+  "work.execute",
+  "material.verify",
+  "evidence.confirm",
+  "workspace.resume",
+  "work.context",
+  "evidence.bundle",
+  "experience.search",
+  "project.next_action",
+  "list_projects",
+  "get_current_project",
+  "get_project_context",
+  "get_project_state",
+  "get_current_work_item",
+  "list_project_work_items",
+  "list_evidence",
+  "list_traceable_materials",
+  "get_material_preview",
+  "get_evidence",
+  "get_source_version",
+  "get_validation_workpaper",
+  "search_formal_experiences",
+  "get_formal_experience",
+  "get_experience_evidence",
+  "workpaper.propose",
+  "material.create",
+  "evidence.propose",
+]);
+
 export type McpBuildIdentity = {
   startup: string;
   current(): string;

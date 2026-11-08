@@ -116,7 +116,9 @@ describe("dingjiang-mcp stdio dispatcher", () => {
 
     dispatch("   ");
     dispatch("");
-    dispatch(JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }));
+    dispatch(
+      JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }),
+    );
     await dispatch.drain();
 
     expect(responses).toHaveLength(0);
@@ -126,13 +128,23 @@ describe("dingjiang-mcp stdio dispatcher", () => {
     const handler = vi.fn();
     const { dispatch, responses } = setup(handler, { maxLineBytes: 64 });
 
-    dispatch(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping", params: { pad: "x".repeat(200) } }));
+    dispatch(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "ping",
+        params: { pad: "x".repeat(200) },
+      }),
+    );
     await dispatch.drain();
 
     expect(handler).not.toHaveBeenCalled();
     expect(responses[0]).toMatchObject({
       id: null,
-      error: { code: -32600, data: { code: "REQUEST_TOO_LARGE", maxLineBytes: 64 } },
+      error: {
+        code: -32600,
+        data: { code: "REQUEST_TOO_LARGE", maxLineBytes: 64 },
+      },
     });
   });
 

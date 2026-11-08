@@ -585,12 +585,14 @@ describe("dingjiang-mcp protocol", () => {
 describe("dingjiang-mcp transport error surface", () => {
   it("classifies transport failures separately from caller input errors", async () => {
     const integration = client();
-    integration.getProjectState = vi.fn().mockRejectedValue(
-      new IntegrationTransportError(
-        "INTEGRATION_TIMEOUT",
-        "Integration API 请求超时；不得改 requestId 重试",
-      ),
-    );
+    integration.getProjectState = vi
+      .fn()
+      .mockRejectedValue(
+        new IntegrationTransportError(
+          "INTEGRATION_TIMEOUT",
+          "Integration API 请求超时；不得改 requestId 重试",
+        ),
+      );
     const response = await createMcpHandler(integration)({
       jsonrpc: "2.0",
       id: "transport-timeout",
@@ -601,9 +603,10 @@ describe("dingjiang-mcp transport error surface", () => {
     const result = (
       response as { result?: { content?: Array<{ text?: string }> } }
     ).result;
-    const payload = JSON.parse(
-      result?.content?.[0]?.text ?? "{}",
-    ) as Record<string, unknown>;
+    const payload = JSON.parse(result?.content?.[0]?.text ?? "{}") as Record<
+      string,
+      unknown
+    >;
     expect(payload).toMatchObject({
       code: "INTEGRATION_TIMEOUT",
       retryable: false,
