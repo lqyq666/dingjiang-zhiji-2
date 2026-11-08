@@ -33,7 +33,7 @@ jobs:
       - run: docker compose config
 
   # The verify job runs every test that does not need infrastructure, which
-  # means the ~90 database-backed cases stay skipped. This job gives them a
+  # means the 104 database-backed cases stay skipped. This job gives them a
   # real PostgreSQL so the governed-command, material, evidence, workpaper and
   # end-to-end paths are actually executed on every push.
   integration:

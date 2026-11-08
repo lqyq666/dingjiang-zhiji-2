@@ -40,7 +40,7 @@ pnpm --filter @dingjiang/api db:reset
 pnpm dev
 ```
 
-默认 Web 地址为 `http://localhost:3000`，API 地址为 `http://127.0.0.1:3001`。`db:reset` 只允许用于本地可销毁数据库。
+默认 Web 地址为 `http://localhost:3000`，API 地址为 `http://127.0.0.1:3001`。`db:reset` 只会重建 schema 并重放迁移与演示种子，只允许用于本地可销毁数据库。它同时是修复"库结构与迁移文件分叉"的手段：启动时若发现 `schema_migrations` 里有仓库中已不存在的迁移，API 会拒绝启动并说明原因。
 
 ## 验证
 
@@ -52,7 +52,7 @@ pnpm build
 docker compose config --quiet
 ```
 
-需要真实数据库的验证另有一条命令。仓库里约 90 个用例挂在 `*_INTEGRATION=1` 开关后面，其中三个还会拒绝在共享库上运行（它们会重置数据，要求专用库），过去只能靠口头约定逐个跑：
+需要真实数据库的验证另有一条命令。仓库里 104 个用例（33 个文件）挂在 `*_INTEGRATION=1` 开关后面，其中三个还会拒绝在共享库上运行（它们会重置数据，要求专用库），过去只能靠口头约定逐个跑：
 
 ```bash
 docker compose up -d postgres

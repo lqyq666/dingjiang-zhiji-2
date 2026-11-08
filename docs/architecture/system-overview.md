@@ -46,8 +46,8 @@
                 │  只有这里碰 SQL
 ┌───────────────▼────────────────────────────────────────────────────────┐
 │                              数据层                                     │
-│  PostgreSQL 17 + pgvector · 59 张表 · 每表 FORCE ROW LEVEL SECURITY     │
-│  不可变 SourceVersion · 受治理命令回执 · 事件表 · 迁移 39 个（含校验和） │
+│  PostgreSQL 17 + pgvector · 59 张表 · 业务表全部 FORCE ROW LEVEL SECURITY │
+│  不可变 SourceVersion · 受治理命令回执 · 事件表 · 迁移 40 个（含校验和） │
 │  文件内容库（MaterialContentVault，按 sha256 寻址）                      │
 └────────────────────────────────────────────────────────────────────────┘
 ```
@@ -161,26 +161,35 @@ KNOWLEDGE_CAPTURE       经验沉淀    ── 经验候选 → 专家审核 →
 
 ## 8. 已知的架构债务（不美化）
 
-### 8.1 `apps/api/src/vs01.service.ts`：5261 行、94 个方法
+### 8.1 `apps/api/src/vs01.service.ts`：4642 行、82 个方法
 
-这是全仓库最大的单点问题。它同时承担六个上下文：
+这是全仓库最大的单点问题。它仍然同时承担六个上下文：
 
-| 关注点              | 代表方法                                                                     | 大致行数 |
-| ------------------- | ---------------------------------------------------------------------------- | -------- |
-| 任务/订单接入与决策 | `employee` `boss` `task` `decideTask`                                        | ~550     |
-| 材料登记/导入/撤回  | `addTaskMaterial` `importTaskMaterial` `materialProjection`                  | ~700     |
-| 项目与阶段推进      | `createProject` `submitProject` `updateSubtask` `reviewExecutionPhase`       | ~1400    |
-| AI 助手与引导分析   | `assistTask` `assistProject` `guidedAnalysis*` `nextConsultingAction`        | ~900     |
-| 经验资产生命周期    | `createExperienceCandidate` `approveExperienceCandidate` `retractExperience` | ~1100    |
-| 读模型/投影         | `taskTemplates` `orderRisk` `situations` `evidence`                          | ~600     |
+| 关注点              | 代表方法                                                                     | 大致行数 | 状态                   |
+| ------------------- | ---------------------------------------------------------------------------- | -------- | ---------------------- |
+| 任务/订单接入与决策 | `employee` `boss` `task` `decideTask`                                        | ~550     | 留在原处               |
+| 材料登记/导入/撤回  | `addTaskMaterial` `importTaskMaterial` `materialProjection`                  | 0        | 已搬出（−245）         |
+| 项目与阶段推进      | `createProject` `submitProject` `updateSubtask` `reviewExecutionPhase`       | ~1400    | 留在原处               |
+| AI 助手与引导分析   | `assistTask` `assistProject`                                                 | ~600     | 引导逻辑已搬出（−320） |
+| 经验资产生命周期    | `createExperienceCandidate` `approveExperienceCandidate` `retractExperience` | ~1100    | 留在原处               |
+| 读模型/投影         | `taskTemplates` `orderRisk` `situations` `evidence`                          | ~600     | 留在原处               |
 
-它没有变坏，是因为**每次改动都太小**。这类债务的正确处理方式不是"找时间重写"，而是给它加一道可测量的闸：先拆风险最低的一块（纯投影：`taskTemplates` / `orderRisk` / `situations`，无事务、无状态写入），验证拆分不改行为，再逐块推进。
+它没有变坏，是因为**每次改动都太小**。这类债务的正确处理方式不是"找时间重写"，而是按耦合度从低到高一块块搬，每搬一块都用全量用例做回归护栏。已经搬走的两块：
 
-（本轮没有动它。改造一个 5000 行、被 217 个用例覆盖的服务，需要独立的、有回归护栏的窗口，不该塞进"顺手优化"里。）
+1. **AI 引导分析**（`currentWorkStage` `guidedAnalysis*` `nextConsultingAction` `experienceDraft` `answerConsultingQuestion` 等八个纯函数）→ `apps/api/src/assistant/guided-analysis.ts`。零事务、零状态写入，只读契约对象，是耦合度最低的一块。
+2. **材料子域**（四个命令 + `materialById`）→ `apps/api/src/materials/material-service.ts`，投影函数拆到 `material-projection.ts` 由读模型与写命令共享。难点在事务 seam：绑定实例跑在命令内核事务内，绝不 commit / rollback / release 调用方的 client，独立实例自己开自己关；导入路径上"临时键与最终键都要 discard"的补偿逻辑一并搬了过去。
+
+同时删掉了 `projectTransition`——生产零调用、只有测试在测的死代码。
+
+**剩下的部分建议单独开一轮。** 读模型虽然"只读"，但 `findProject` 是 300 行巨方法、它是全系统的读入口（6 个 service 加 controller 都在用），而且事务内读必须拿到同一个 client 才不会读到错误连接；项目状态机与经验资产则通过 `appendProjectEvent`、`projectNodeId` 等共享写原语互相纠缠。搬它们需要比现在更宽的回归窗口，不该混在一起做。
+
+`tooling/architecture/boundaries.test.ts` 的尺寸棘轮守着这个文件不许再长大，预算随每次拆分同步下调（5261 → 4888 → 4642）。
 
 ### 8.2 其他已记录的债务
 
-- **迁移校验和不可回改**：`0039` 之前的迁移一旦发布，任何字符改动都会导致启动失败。这是刻意的（防静默改历史），代价是修正只能新增迁移。
+- **迁移校验和不可回改**：已发布的迁移一旦发布，任何字符改动都会导致启动失败。这是刻意的（防静默改历史），代价是修正只能新增迁移。
+- **迁移文件被重写会让本地活库与新部署分叉**：本仓库历史上有两个迁移文件被重写过（旧的 ERP 拉取与 WPS 投影），长期使用的本地库因此多出五张代码零引用的表，而全新部署不会有——两边结构悄悄分开了。现在 `migrate` 会检查 `schema_migrations` 里是否存在仓库中已不存在的迁移并拒绝启动，`pnpm db:reset` 改为重建 schema 而不是只清数据，用来修复这类漂移。
+- **重建 schema 会丢掉默认权限**：`CREATE SCHEMA public` 不等于 PostgreSQL 初始化时那个 public schema——后者带 `GRANT USAGE ... TO PUBLIC`，重建的那个不带。少了这条，运行时角色看不见任何表，报出来的是"relation does not exist"，而不是本该报的权限错误，排查方向会被完全带偏。`db:reset` 现在会显式补回这条授权并把 schema 的 owner 交回 `pg_database_owner`。
 - **`~/.workbuddy/mcp.json` 里 `DINGJIANG_MCP_API_TOKEN` 是明文**：本机配置文件，不在仓库内，但仍是待处理项。
 - **没有浏览器级 e2e**：判据取舍见 `README.md` tier5 一节。当前用数据层直驱覆盖契约，不覆盖渲染。
 

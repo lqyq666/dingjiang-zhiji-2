@@ -211,6 +211,21 @@ export async function migrate(pool: Pool): Promise<void> {
     await client.query(
       "ALTER TABLE schema_migrations ADD COLUMN IF NOT EXISTS checksum text",
     );
+    // A migration file that was rewritten after it had been applied leaves a
+    // record behind that no longer matches the repository. The database then
+    // keeps tables the current schema never creates, and it silently diverges
+    // from a fresh deployment. Refuse instead of running on a schema nobody
+    // can reproduce.
+    const appliedIds = await client.query("SELECT id FROM schema_migrations");
+    const known = new Set<string>(migrations);
+    const orphans = appliedIds.rows
+      .map((row) => String(row.id))
+      .filter((id) => !known.has(id));
+    if (orphans.length > 0)
+      throw new Error(
+        `Database has applied migrations that no longer exist in the repository: ${orphans.join(", ")}. ` +
+          "The schema and the migration files have diverged; recreate the database.",
+      );
     for (const migrationId of migrations) {
       const sql = await readFile(
         path.resolve(__dirname, `../migrations/${migrationId}.sql`),
@@ -361,6 +376,36 @@ export async function resetAndSeed(pool: Pool): Promise<void> {
   }
 }
 
+/**
+ * Recreate the database from the migration files.
+ *
+ * `resetAndSeed` only truncates the business tables, so it cannot repair a
+ * database whose shape has drifted from the repository - for example one that
+ * still carries the tables of a migration file that was later rewritten.
+ * This drops the schema instead, which removes every leftover object, and
+ * then replays the migrations and the demo seed.
+ */
+export async function resetDatabase(pool: Pool): Promise<void> {
+  if (isProduction())
+    throw new Error("Demo seed/reset is disabled in production");
+  const client = await pool.connect();
+  try {
+    await client.query("DROP SCHEMA IF EXISTS public CASCADE");
+    await client.query("CREATE SCHEMA public");
+    // A freshly created schema is not the same thing as the one PostgreSQL
+    // ships with. The default public schema carries USAGE for PUBLIC, and
+    // `CREATE SCHEMA public` does not: without this grant every runtime role
+    // loses sight of every table and reports "relation does not exist"
+    // instead of the permission error it should report.
+    await client.query("GRANT USAGE ON SCHEMA public TO PUBLIC");
+    await client.query("ALTER SCHEMA public OWNER TO pg_database_owner");
+  } finally {
+    client.release();
+  }
+  await migrate(pool);
+  await resetAndSeed(pool);
+}
+
 async function clear(client: PoolClient): Promise<void> {
   await client.query(
     "TRUNCATE vs32_formal_evidence, vs32_evidence_confirmations, vs32_evidence_proposals, vs18_task_proposal_events, vs18_approval_requests, vs18_task_proposals, vs17_experience_command_receipts, vs17_experience_ai_runs, vs12_assistant_stream_events, vs12_assistant_runs, vs12_assistant_sessions, vs12_work_events, vs16_root_cause_workpaper_commands, vs16_root_cause_workpaper_evidence, vs16_root_cause_workpaper_versions, vs16_root_cause_workpapers, vs01_assistant_feedback_events, vs01_assistant_feedback_candidates, vs01_project_events, vs01_experience_reference_events, vs01_experience_references, vs01_formal_experiences, vs01_experience_candidate_revisions, vs01_experience_candidates, vs01_result_validations, vs01_project_subtask_events, vs15_governed_material_versions, vs01_project_subtasks, vs01_project_phases, vs15_material_events, vs15_material_contents, vs01_task_materials, vs01_node_updates, vs01_project_nodes, vs01_projects, vs01_decision_events, vs01_decisions, vs01_tasks, vs01_purchases, vs01_bom, vs01_orders RESTART IDENTITY CASCADE",
@@ -474,8 +519,11 @@ async function main(): Promise<void> {
   }
   const pool = createPool(connectionString);
   try {
-    await migrate(pool);
-    if (command === "seed" || command === "reset") await resetAndSeed(pool);
+    if (command === "reset") await resetDatabase(pool);
+    else {
+      await migrate(pool);
+      if (command === "seed") await resetAndSeed(pool);
+    }
   } finally {
     await pool.end();
   }

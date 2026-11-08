@@ -81,6 +81,7 @@ const switches = {
   PRODUCTION_INTEGRATION: "1",
   INDEX_AUDIT_INTEGRATION: "1",
   FEISHU_DELIVERY_INTEGRATION: "1",
+  MIGRATION_DRIFT_INTEGRATION: "1",
 };
 
 const reservedDatabases = {
