@@ -22,7 +22,10 @@ import { fileURLToPath } from "node:url";
 const require = createRequire(import.meta.url);
 const here = dirname(fileURLToPath(import.meta.url));
 const protocol = require("../dist/protocol.js");
-const { IntegrationTransportError } = require("../dist/client.js");
+const {
+  IntegrationTransportError,
+  IntegrationClientError,
+} = require("../dist/client.js");
 
 const { fixtures, cases } = JSON.parse(
   readFileSync(join(here, "cases.json"), "utf8"),
@@ -107,6 +110,24 @@ const runCase = async (testCase) =>
         );
       };
     }
+    if (testCase.kind === "absent") {
+      const { method, code } = testCase.absent;
+      overrides[method] = () => {
+        throw new IntegrationClientError({
+          ok: false,
+          error: {
+            code,
+            message:
+              code === "NOT_FOUND"
+                ? "授权范围内未找到该资源"
+                : "当前身份无权访问该资源",
+            retryable: false,
+            requiresHuman: code !== "NOT_FOUND",
+          },
+          correlationId: "6f1c2f7e-1111-4222-8333-444455556666",
+        });
+      };
+    }
     const { client, calls } = createClient(overrides);
     const handler = protocol.createMcpHandler(client, identity);
     const result = await invokeTool(handler, testCase.tool, testCase.arguments);
@@ -143,6 +164,25 @@ const runCase = async (testCase) =>
       const next = await invokeTool(handler, "get_current_project", {});
       if (next.isError) return fail("后续调用被前一次故障污染");
       return ok("结构化错误 + 后续调用恢复");
+    }
+
+    if (testCase.kind === "absent") {
+      // A constituent that is merely not created yet must degrade; a
+      // constituent the caller may not read must not.
+      if (testCase.expect.errorCode) {
+        if (!result.isError) return fail("越权缺失被静默降级");
+        if (result.payload?.code !== testCase.expect.errorCode)
+          return fail(
+            `错误码为 ${result.payload?.code ?? "未知"}，应为 ${testCase.expect.errorCode}`,
+          );
+        return ok(`${testCase.expect.errorCode} 未被降级`);
+      }
+      if (result.isError)
+        return fail(`聚合失败：${result.payload?.code ?? result.text}`);
+      const value = result.structured?.[testCase.expect.path];
+      if (value !== testCase.expect.value)
+        return fail(`${testCase.expect.path} 为 ${JSON.stringify(value)}`);
+      return ok(`${testCase.expect.path}=null 且其余字段完整`);
     }
 
     return fail(`未知用例类型：${testCase.kind}`);
@@ -321,13 +361,14 @@ const run = async () => {
     guard: tally(group("guard")),
     governance: tally(group("governance")),
     recovery: tally(group("recovery")),
+    absent: tally(group("absent")),
     protocol: tally(group("protocol")),
     failures: results.filter((item) => !item.pass),
   };
   summary.ok =
     drift.pass &&
     metadata.pass &&
-    ["happy", "guard", "governance", "recovery", "protocol"].every(
+    ["happy", "guard", "governance", "recovery", "absent", "protocol"].every(
       (kind) => rate(group(kind)) === 1,
     );
 
@@ -432,6 +473,12 @@ function renderReport(summary, results) {
       summary.recovery.passed,
       summary.recovery.total,
       "超时映射为 INTEGRATION_TIMEOUT，不泄露授权头，后续调用仍成功",
+    ),
+    invariant(
+      "可选子资源缺失时降级、越权时不降级",
+      summary.absent.passed,
+      summary.absent.total,
+      "NOT_FOUND → null 且聚合成功；FORBIDDEN → 原样失败",
     ),
     invariant(
       "协议契约",

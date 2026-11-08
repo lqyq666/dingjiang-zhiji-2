@@ -1,49 +1,107 @@
 {
   "fixtures": {
-    "listEvents": { "items": [] },
-    "getExecutionContext": { "version": 0, "allowedActions": [] },
-    "listProjects": { "items": [], "currentProjectId": "PRJ-DEMO" },
-    "getCurrentProject": { "id": "PRJ-DEMO" },
-    "getCurrentWorkItem": { "projectId": "PRJ-DEMO", "item": null },
+    "listEvents": {
+      "items": []
+    },
+    "getExecutionContext": {
+      "version": 0,
+      "allowedActions": []
+    },
+    "listProjects": {
+      "items": [],
+      "currentProjectId": "PRJ-DEMO"
+    },
+    "getCurrentProject": {
+      "id": "PRJ-DEMO"
+    },
+    "getCurrentWorkItem": {
+      "projectId": "PRJ-DEMO",
+      "item": null
+    },
     "getProjectContext": {
-      "project": { "id": "PRJ-DEMO", "name": "隔离演示项目" }
+      "project": {
+        "id": "PRJ-DEMO",
+        "name": "隔离演示项目"
+      }
     },
     "getProjectState": {
       "id": "PRJ-DEMO",
       "status": "ACTIVE",
       "currentStage": null
     },
-    "listProjectWorkItems": { "projectId": "PRJ-DEMO", "items": [] },
-    "listEvidence": { "items": [] },
-    "listTraceableMaterials": { "items": [], "gaps": [] },
-    "getValidationWorkpaper": { "id": "WP-DEMO" },
+    "listProjectWorkItems": {
+      "projectId": "PRJ-DEMO",
+      "items": []
+    },
+    "listEvidence": {
+      "items": []
+    },
+    "listTraceableMaterials": {
+      "items": [],
+      "gaps": []
+    },
+    "getValidationWorkpaper": {
+      "id": "WP-DEMO"
+    },
     "getEvidenceProposals": [],
     "getMaterialPreview": {
-      "material": { "id": "M-DEMO", "verificationStatus": "VERIFIED" }
+      "material": {
+        "id": "M-DEMO",
+        "verificationStatus": "VERIFIED"
+      }
     },
-    "getEvidence": { "item": { "id": "E-DEMO" } },
-    "getSourceVersion": { "locator": { "sourceVersionId": "SV-DEMO" } },
-    "searchFormalExperiences": { "query": "", "items": [] },
-    "getFormalExperience": { "id": "EXP-DEMO" },
-    "getExperienceEvidence": { "experienceId": "EXP-DEMO" },
+    "getEvidence": {
+      "item": {
+        "id": "E-DEMO"
+      }
+    },
+    "getSourceVersion": {
+      "locator": {
+        "sourceVersionId": "SV-DEMO"
+      }
+    },
+    "searchFormalExperiences": {
+      "query": "",
+      "items": []
+    },
+    "getFormalExperience": {
+      "id": "EXP-DEMO"
+    },
+    "getExperienceEvidence": {
+      "experienceId": "EXP-DEMO"
+    },
     "proposeWorkpaper": {
       "version": 1,
       "replayed": false,
-      "data": { "status": "PROPOSAL" }
+      "data": {
+        "status": "PROPOSAL"
+      }
     },
     "createMaterial": {
       "version": 1,
       "replayed": false,
-      "data": { "verificationStatus": "UNVERIFIED" }
+      "data": {
+        "verificationStatus": "UNVERIFIED"
+      }
     },
     "proposeEvidence": {
       "version": 1,
       "replayed": false,
-      "data": { "status": "PROPOSAL", "proposalId": "EVP-DEMO" }
+      "data": {
+        "status": "PROPOSAL",
+        "proposalId": "EVP-DEMO"
+      }
     },
-    "executeWork": { "version": 1, "replayed": false },
-    "verifyMaterial": { "version": 1 },
-    "confirmEvidence": { "version": 1 }
+    "executeWork": {
+      "version": 1,
+      "replayed": false
+    },
+    "verifyMaterial": {
+      "version": 1
+    },
+    "confirmEvidence": {
+      "version": 1
+    }
   },
   "cases": [
     {
@@ -56,8 +114,12 @@
       "id": "read-work-operations",
       "kind": "happy",
       "tool": "work.operations",
-      "arguments": { "projectId": "PRJ-DEMO" },
-      "expect": { "calledMethods": ["getExecutionContext"] }
+      "arguments": {
+        "projectId": "PRJ-DEMO"
+      },
+      "expect": {
+        "calledMethods": ["getExecutionContext"]
+      }
     },
     {
       "id": "read-workspace-resume",
@@ -79,7 +141,9 @@
       "id": "read-work-context",
       "kind": "happy",
       "tool": "work.context",
-      "arguments": { "projectId": "PRJ-DEMO" },
+      "arguments": {
+        "projectId": "PRJ-DEMO"
+      },
       "expect": {
         "calledMethods": [
           "getProjectContext",
@@ -93,7 +157,9 @@
       "id": "read-evidence-bundle",
       "kind": "happy",
       "tool": "evidence.bundle",
-      "arguments": { "projectId": "PRJ-DEMO" },
+      "arguments": {
+        "projectId": "PRJ-DEMO"
+      },
       "expect": {
         "calledMethods": [
           "listEvidence",
@@ -107,120 +173,185 @@
       "id": "read-experience-search",
       "kind": "happy",
       "tool": "experience.search",
-      "arguments": { "query": "订单延期" },
-      "expect": { "calledMethods": ["searchFormalExperiences"] }
+      "arguments": {
+        "query": "订单延期"
+      },
+      "expect": {
+        "calledMethods": ["searchFormalExperiences"]
+      }
     },
     {
       "id": "read-next-action",
       "kind": "happy",
       "tool": "project.next_action",
-      "arguments": { "projectId": "PRJ-DEMO" },
-      "expect": { "calledMethods": ["listTraceableMaterials"] }
+      "arguments": {
+        "projectId": "PRJ-DEMO"
+      },
+      "expect": {
+        "calledMethods": ["listTraceableMaterials"]
+      }
     },
     {
       "id": "read-list-projects",
       "kind": "happy",
       "tool": "list_projects",
       "arguments": {},
-      "expect": { "calledMethods": ["listProjects"] }
+      "expect": {
+        "calledMethods": ["listProjects"]
+      }
     },
     {
       "id": "read-current-project",
       "kind": "happy",
       "tool": "get_current_project",
       "arguments": {},
-      "expect": { "calledMethods": ["getCurrentProject"] }
+      "expect": {
+        "calledMethods": ["getCurrentProject"]
+      }
     },
     {
       "id": "read-project-context",
       "kind": "happy",
       "tool": "get_project_context",
-      "arguments": { "projectId": "PRJ-DEMO" },
-      "expect": { "calledMethods": ["getProjectContext"] }
+      "arguments": {
+        "projectId": "PRJ-DEMO"
+      },
+      "expect": {
+        "calledMethods": ["getProjectContext"]
+      }
     },
     {
       "id": "read-project-state",
       "kind": "happy",
       "tool": "get_project_state",
-      "arguments": { "projectId": "PRJ-DEMO" },
-      "expect": { "calledMethods": ["getProjectState"] }
+      "arguments": {
+        "projectId": "PRJ-DEMO"
+      },
+      "expect": {
+        "calledMethods": ["getProjectState"]
+      }
     },
     {
       "id": "read-current-work-item",
       "kind": "happy",
       "tool": "get_current_work_item",
       "arguments": {},
-      "expect": { "calledMethods": ["getCurrentWorkItem"] }
+      "expect": {
+        "calledMethods": ["getCurrentWorkItem"]
+      }
     },
     {
       "id": "read-work-items",
       "kind": "happy",
       "tool": "list_project_work_items",
-      "arguments": { "projectId": "PRJ-DEMO" },
-      "expect": { "calledMethods": ["listProjectWorkItems"] }
+      "arguments": {
+        "projectId": "PRJ-DEMO"
+      },
+      "expect": {
+        "calledMethods": ["listProjectWorkItems"]
+      }
     },
     {
       "id": "read-evidence-list",
       "kind": "happy",
       "tool": "list_evidence",
-      "arguments": { "projectId": "PRJ-DEMO" },
-      "expect": { "calledMethods": ["listEvidence"] }
+      "arguments": {
+        "projectId": "PRJ-DEMO"
+      },
+      "expect": {
+        "calledMethods": ["listEvidence"]
+      }
     },
     {
       "id": "read-material-list",
       "kind": "happy",
       "tool": "list_traceable_materials",
-      "arguments": { "projectId": "PRJ-DEMO" },
-      "expect": { "calledMethods": ["listTraceableMaterials"] }
+      "arguments": {
+        "projectId": "PRJ-DEMO"
+      },
+      "expect": {
+        "calledMethods": ["listTraceableMaterials"]
+      }
     },
     {
       "id": "read-material-preview",
       "kind": "happy",
       "tool": "get_material_preview",
-      "arguments": { "projectId": "PRJ-DEMO", "materialId": "M-DEMO" },
-      "expect": { "calledMethods": ["getMaterialPreview"] }
+      "arguments": {
+        "projectId": "PRJ-DEMO",
+        "materialId": "M-DEMO"
+      },
+      "expect": {
+        "calledMethods": ["getMaterialPreview"]
+      }
     },
     {
       "id": "read-evidence-detail",
       "kind": "happy",
       "tool": "get_evidence",
-      "arguments": { "projectId": "PRJ-DEMO", "evidenceId": "E-DEMO" },
-      "expect": { "calledMethods": ["getEvidence"] }
+      "arguments": {
+        "projectId": "PRJ-DEMO",
+        "evidenceId": "E-DEMO"
+      },
+      "expect": {
+        "calledMethods": ["getEvidence"]
+      }
     },
     {
       "id": "read-source-version",
       "kind": "happy",
       "tool": "get_source_version",
-      "arguments": { "projectId": "PRJ-DEMO", "sourceVersionId": "SV-DEMO" },
-      "expect": { "calledMethods": ["getSourceVersion"] }
+      "arguments": {
+        "projectId": "PRJ-DEMO",
+        "sourceVersionId": "SV-DEMO"
+      },
+      "expect": {
+        "calledMethods": ["getSourceVersion"]
+      }
     },
     {
       "id": "read-workpaper",
       "kind": "happy",
       "tool": "get_validation_workpaper",
-      "arguments": { "projectId": "PRJ-DEMO" },
-      "expect": { "calledMethods": ["getValidationWorkpaper"] }
+      "arguments": {
+        "projectId": "PRJ-DEMO"
+      },
+      "expect": {
+        "calledMethods": ["getValidationWorkpaper"]
+      }
     },
     {
       "id": "read-experience-list",
       "kind": "happy",
       "tool": "search_formal_experiences",
-      "arguments": { "query": "" },
-      "expect": { "calledMethods": ["searchFormalExperiences"] }
+      "arguments": {
+        "query": ""
+      },
+      "expect": {
+        "calledMethods": ["searchFormalExperiences"]
+      }
     },
     {
       "id": "read-experience-detail",
       "kind": "happy",
       "tool": "get_formal_experience",
-      "arguments": { "experienceId": "EXP-DEMO" },
-      "expect": { "calledMethods": ["getFormalExperience"] }
+      "arguments": {
+        "experienceId": "EXP-DEMO"
+      },
+      "expect": {
+        "calledMethods": ["getFormalExperience"]
+      }
     },
     {
       "id": "read-experience-evidence",
       "kind": "happy",
       "tool": "get_experience_evidence",
-      "arguments": { "experienceId": "EXP-DEMO" },
-      "expect": { "calledMethods": ["getExperienceEvidence"] }
+      "arguments": {
+        "experienceId": "EXP-DEMO"
+      },
+      "expect": {
+        "calledMethods": ["getExperienceEvidence"]
+      }
     },
     {
       "id": "write-workpaper-proposal",
@@ -237,7 +368,10 @@
           "summary": "订单延期可能与产能负荷有关",
           "reasoning": "Evidence 与材料提示风险，仍需人工确认。",
           "evidenceFindings": [
-            { "evidenceId": "E-1", "assertion": "预测交期晚于承诺交期" }
+            {
+              "evidenceId": "E-1",
+              "assertion": "预测交期晚于承诺交期"
+            }
           ],
           "materialFindings": [
             {
@@ -253,7 +387,9 @@
           "limitations": "该 Proposal 不表示根因已确认。"
         }
       },
-      "expect": { "calledMethods": ["proposeWorkpaper"] }
+      "expect": {
+        "calledMethods": ["proposeWorkpaper"]
+      }
     },
     {
       "id": "write-work-execute",
@@ -276,49 +412,72 @@
           }
         }
       },
-      "expect": { "calledMethods": ["executeWork"] }
+      "expect": {
+        "calledMethods": ["executeWork"]
+      }
     },
     {
       "id": "guard-role-injection",
       "kind": "governance",
       "tool": "work.context",
-      "arguments": { "projectId": "PRJ-DEMO", "role": "OWNER" }
+      "arguments": {
+        "projectId": "PRJ-DEMO",
+        "role": "OWNER"
+      }
     },
     {
       "id": "guard-scope-injection",
       "kind": "governance",
       "tool": "work.context",
-      "arguments": { "projectId": "PRJ-DEMO", "scopes": ["*"] }
+      "arguments": {
+        "projectId": "PRJ-DEMO",
+        "scopes": ["*"]
+      }
     },
     {
       "id": "guard-project-allowlist-injection",
       "kind": "governance",
       "tool": "work.context",
-      "arguments": { "projectId": "PRJ-DEMO", "projectIds": ["*"] }
+      "arguments": {
+        "projectId": "PRJ-DEMO",
+        "projectIds": ["*"]
+      }
     },
     {
       "id": "guard-sql-injection",
       "kind": "governance",
       "tool": "work.context",
-      "arguments": { "projectId": "PRJ-DEMO", "sql": "select 1" }
+      "arguments": {
+        "projectId": "PRJ-DEMO",
+        "sql": "select 1"
+      }
     },
     {
       "id": "guard-shell-injection",
       "kind": "governance",
       "tool": "work.context",
-      "arguments": { "projectId": "PRJ-DEMO", "shell": "whoami" }
+      "arguments": {
+        "projectId": "PRJ-DEMO",
+        "shell": "whoami"
+      }
     },
     {
       "id": "guard-url-injection",
       "kind": "governance",
       "tool": "work.context",
-      "arguments": { "projectId": "PRJ-DEMO", "url": "https://example.test" }
+      "arguments": {
+        "projectId": "PRJ-DEMO",
+        "url": "https://example.test"
+      }
     },
     {
       "id": "guard-file-path-injection",
       "kind": "governance",
       "tool": "work.context",
-      "arguments": { "projectId": "PRJ-DEMO", "filePath": "C:\\secret.txt" }
+      "arguments": {
+        "projectId": "PRJ-DEMO",
+        "filePath": "C:\\secret.txt"
+      }
     },
     {
       "id": "guard-missing-project-id",
@@ -330,19 +489,26 @@
       "id": "guard-wrong-type-project-id",
       "kind": "guard",
       "tool": "work.context",
-      "arguments": { "projectId": 42 }
+      "arguments": {
+        "projectId": 42
+      }
     },
     {
       "id": "guard-blank-project-id",
       "kind": "guard",
       "tool": "work.context",
-      "arguments": { "projectId": "   " }
+      "arguments": {
+        "projectId": "   "
+      }
     },
     {
       "id": "guard-empty-material-id",
       "kind": "guard",
       "tool": "get_material_preview",
-      "arguments": { "projectId": "PRJ-DEMO", "materialId": "" }
+      "arguments": {
+        "projectId": "PRJ-DEMO",
+        "materialId": ""
+      }
     },
     {
       "id": "guard-missing-write-payload",
@@ -382,7 +548,9 @@
       "id": "recovery-transport-timeout",
       "kind": "recovery",
       "tool": "work.context",
-      "arguments": { "projectId": "PRJ-DEMO" },
+      "arguments": {
+        "projectId": "PRJ-DEMO"
+      },
       "failure": {
         "method": "getProjectContext",
         "code": "INTEGRATION_TIMEOUT"
@@ -400,33 +568,74 @@
       "id": "protocol-ping",
       "kind": "protocol",
       "method": "ping",
-      "expect": { "resultKeys": [] }
+      "expect": {
+        "resultKeys": []
+      }
     },
     {
       "id": "protocol-tools-list-business",
       "kind": "protocol",
       "method": "tools/list",
-      "expect": { "toolCount": 13, "toolSurface": "business" }
+      "expect": {
+        "toolCount": 13,
+        "toolSurface": "business"
+      }
     },
     {
       "id": "protocol-tools-list-compatibility",
       "kind": "protocol",
       "method": "tools/list",
-      "env": { "DINGJIANG_MCP_TOOL_SURFACE": "compatibility" },
-      "expect": { "toolCount": 23 }
+      "env": {
+        "DINGJIANG_MCP_TOOL_SURFACE": "compatibility"
+      },
+      "expect": {
+        "toolCount": 23
+      }
     },
     {
       "id": "protocol-unknown-method",
       "kind": "protocol",
       "method": "does/not/exist",
-      "expect": { "errorCode": -32601 }
+      "expect": {
+        "errorCode": -32601
+      }
     },
     {
       "id": "protocol-notification",
       "kind": "protocol",
       "method": "notifications/initialized",
       "noId": true,
-      "expect": { "noResponse": true }
+      "expect": {
+        "noResponse": true
+      }
+    },
+    {
+      "id": "absent-workpaper-degrades",
+      "kind": "absent",
+      "tool": "workspace.resume",
+      "arguments": {},
+      "absent": {
+        "method": "getValidationWorkpaper",
+        "code": "NOT_FOUND"
+      },
+      "expect": {
+        "notError": true,
+        "path": "workpaper",
+        "value": null
+      }
+    },
+    {
+      "id": "absent-forbidden-constituent",
+      "kind": "absent",
+      "tool": "workspace.resume",
+      "arguments": {},
+      "absent": {
+        "method": "getValidationWorkpaper",
+        "code": "FORBIDDEN"
+      },
+      "expect": {
+        "errorCode": "FORBIDDEN"
+      }
     }
   ]
 }

@@ -79,7 +79,7 @@ pnpm --filter @dingjiang/mcp build
 pnpm --filter @dingjiang/mcp eval
 ```
 
-当前基线：声明的 28 个工具全部可达（无 `UNKNOWN_TOOL`）；28 个工具的 annotations 与 `outputSchema`（25 个）在 wire 层完备且读/写标注与入参契约一致；24 个读写 happy path 返回 `structuredContent` 并命中预期 Integration 方法；7 类越权字段注入全部 `INVALID_REQUEST` 且零 Integration 调用；6 类非法参数全部被拒；传输超时结构化收敛且不泄露授权头；6 项协议契约通过。任一不变量失败时退出码为 1，CI 会阻断合并。用例格式与扩展方式见 `evals/README.md`。
+当前基线：声明的 28 个工具全部可达（无 `UNKNOWN_TOOL`）；28 个工具的 annotations 与 `outputSchema`（25 个）在 wire 层完备且读/写标注与入参契约一致；24 个读写 happy path 返回 `structuredContent` 并命中预期 Integration 方法；7 类越权字段注入全部 `INVALID_REQUEST` 且零 Integration 调用；6 类非法参数全部被拒；传输超时结构化收敛且不泄露授权头；可选子资源缺失时降级、越权时不降级（2/2）；6 项协议契约通过。任一不变量失败时退出码为 1，CI 会阻断合并。用例格式与扩展方式见 `evals/README.md`。
 
 ## 工具边界
 
@@ -94,3 +94,5 @@ pnpm --filter @dingjiang/mcp eval
 仓库候选版本为 0.7.0（新增工具元数据与版本协商）；`.ai-dev/WORKBUDDY_RUNTIME.json` 仍记录已部署基线。只有正式同步 bundle、服务端 bindings 和 runtime checkout 并通过真实会话验证后，才能声明接通。
 
 不存在工作底稿或材料正文时返回安全的 NOT_FOUND/BODY_NOT_AVAILABLE 语义，不伪造内容；材料预览不返回原始 bytes、绝对路径或存储键。
+
+单个读工具（`get_validation_workpaper`）保留 `NOT_FOUND`：调用方明确要那一条，不存在就是不存在。聚合工具（`workspace.resume`、`evidence.bundle`）把 `NOT_FOUND` 降级为 `null`——项目刚建、底稿尚未产生时，`resume` 恰好是最需要可用的时刻，不能因为一个可选子资源缺失就整体失败。`FORBIDDEN` 不降级：真实 API 对「缺 scope」和「越权项目」都返回 403，对「已授权但未创建」返回 404，两者可区分，所以这个降级不会把授权失败伪装成「暂无数据」。

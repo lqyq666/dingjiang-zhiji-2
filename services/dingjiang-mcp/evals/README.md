@@ -27,6 +27,7 @@ pnpm --filter @dingjiang/mcp exec node evals/run.mjs --json
 | 越权注入拦截 | `role` / `scopes` / `projectIds` / `sql` / `shell` / `url` / `filePath` 一律 `INVALID_REQUEST` 且零 Integration 调用 | 7/7      |
 | 参数守卫     | 缺失、类型错误、空白、非 UUID 均被拒                                                                                 | 6/6      |
 | 传输故障收敛 | 超时映射为 `INTEGRATION_TIMEOUT`，不泄露授权头，后续调用仍成功                                                       | 1/1      |
+| 缺失降级     | 可选子资源 `NOT_FOUND` → `null` 且聚合成功；`FORBIDDEN` 原样失败                                                     | 2/2      |
 | 协议契约     | `initialize` / `ping` / `tools/list` / 未知方法 / notification                                                       | 6/6      |
 
 「元数据完备」这一项从 wire 层读取：测试已经断言导出数组上的 annotations，这里再对真实 JSON-RPC 响应断言一次，因为工具面是按协商版本组装的——如果组装逻辑出错，只读模块的测试看不出来。判定「写入口」不靠工具名清单，而是看入参契约是否同时必填 `requestId` 与 `expectedVersion`：这是受治理命令的唯一结构特征，据此可以独立校验标注有没有说谎。
@@ -39,6 +40,7 @@ pnpm --filter @dingjiang/mcp exec node evals/run.mjs --json
 - `guard`：非法参数，断言 `INVALID_REQUEST` 且未触达 Integration。
 - `governance`：越权字段注入，与 `guard` 同断言，单独统计以突出治理边界。
 - `recovery`：指定方法抛 `IntegrationTransportError`，断言错误码、无授权头泄露、后续调用恢复。
+- `absent`：指定方法抛 `IntegrationClientError`。`NOT_FOUND` 断言聚合仍成功且字段为 `null`，`FORBIDDEN` 断言原样失败——这条用例来自真实端到端跑出的回归：新建项目没有底稿时，`workspace.resume` 曾整体失败。
 - `protocol`：JSON-RPC 层，断言 `result` 字段、工具数量、错误码、notification 无响应；可用 `env` 切换工具面。
 
 新增工具时同步四处：`protocol.ts` 的工具声明、`callTool` 分支、`dispatchedToolNames`、`toolGovernance`。`src/tool-contract.test.ts` 会在任一处漏改时立即失败——工具声明与 dispatcher 双向不一致、或某个工具没有登记读写分类，都会直接抛错而不是退回「默认可疑」的 annotations。

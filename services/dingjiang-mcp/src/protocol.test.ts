@@ -6,7 +6,7 @@ import {
   dingjiangTools,
   type IntegrationClient,
 } from "./protocol";
-import { IntegrationTransportError } from "./client";
+import { IntegrationClientError, IntegrationTransportError } from "./client";
 
 const client = (): IntegrationClient => ({
   listEvents: vi.fn().mockResolvedValue({ items: [] }),
@@ -615,5 +615,63 @@ describe("dingjiang-mcp transport error surface", () => {
     const text = JSON.stringify(response);
     expect(text).not.toContain("TOOL_UNAVAILABLE");
     expect(text).not.toContain("INVALID_REQUEST");
+  });
+});
+
+describe("dingjiang-mcp optional constituents", () => {
+  const failure = (code: "NOT_FOUND" | "FORBIDDEN") => ({
+    ok: false as const,
+    error: {
+      code,
+      message: "授权范围内未找到该资源",
+      retryable: false,
+      requiresHuman: false,
+    },
+    correlationId: "6f1c2f7e-1111-4222-8333-444455556666",
+  });
+
+  const callResume = async (integration: IntegrationClient) => {
+    const response = await createMcpHandler(integration)({
+      jsonrpc: "2.0",
+      id: "resume",
+      method: "tools/call",
+      params: { name: "workspace.resume", arguments: {} },
+    });
+    const result = (
+      response as {
+        result?: { isError?: boolean; content?: Array<{ text?: string }> };
+      }
+    ).result;
+    return {
+      isError: Boolean(result?.isError),
+      payload: JSON.parse(result?.content?.[0]?.text ?? "{}") as Record<
+        string,
+        unknown
+      >,
+    };
+  };
+
+  it("resumes a project that has no workpaper yet instead of failing", async () => {
+    const integration = client();
+    integration.getValidationWorkpaper = vi
+      .fn()
+      .mockRejectedValue(new IntegrationClientError(failure("NOT_FOUND")));
+    const resumed = await callResume(integration);
+    // A freshly created project has no workpaper. The aggregate must report
+    // its absence, not collapse: resume is needed most at that moment.
+    expect(resumed.isError).toBe(false);
+    expect(resumed.payload.workpaper).toBeNull();
+    expect(resumed.payload.projectId).toBe("PRJ-1");
+  });
+
+  it("still fails closed when the constituent is forbidden", async () => {
+    const integration = client();
+    integration.getValidationWorkpaper = vi
+      .fn()
+      .mockRejectedValue(new IntegrationClientError(failure("FORBIDDEN")));
+    const resumed = await callResume(integration);
+    // A missing scope must not be reported as "no workpaper yet".
+    expect(resumed.isError).toBe(true);
+    expect(resumed.payload.code).toBe("FORBIDDEN");
   });
 });

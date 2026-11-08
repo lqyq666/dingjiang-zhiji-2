@@ -1040,6 +1040,31 @@ const loadWorkContext = async (
   };
 };
 
+/**
+ * Reads a constituent that is allowed not to exist yet.
+ *
+ * The composite tools (`workspace.resume`, `evidence.bundle`) used to fail
+ * outright on a project that had not produced a workpaper: the aggregation
+ * propagated the 404 of one optional constituent. A freshly created project
+ * therefore could not be resumed at all, which is exactly when resume matters.
+ *
+ * Only NOT_FOUND is degraded. Verified against the real API: a missing scope or
+ * an out-of-scope project is answered with 403 FORBIDDEN, so this cannot turn
+ * an authorization failure into a silent null.
+ */
+const absentAsNull = async <T>(read: () => Promise<T>): Promise<T | null> => {
+  try {
+    return await read();
+  } catch (error) {
+    if (
+      error instanceof IntegrationClientError &&
+      error.failure.error.code === "NOT_FOUND"
+    )
+      return null;
+    throw error;
+  }
+};
+
 const loadEvidenceBundle = async (
   client: IntegrationClient,
   projectId: string,
@@ -1047,7 +1072,7 @@ const loadEvidenceBundle = async (
   const [evidence, materials, workpaper, proposals] = await Promise.all([
     client.listEvidence(projectId),
     client.listTraceableMaterials(projectId),
-    client.getValidationWorkpaper(projectId),
+    absentAsNull(() => client.getValidationWorkpaper(projectId)),
     client.getEvidenceProposals(projectId),
   ]);
   return { projectId, evidence, materials, workpaper, proposals };
