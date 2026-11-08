@@ -26,7 +26,7 @@ docs                     架构与公开说明
 
 > 迁移文件位于 `apps/api/migrations/`（PostgreSQL，由 API 进程在启动时执行）。README 早期曾把迁移标注在 `supabase/` 下，那是遗留描述；仓库从未使用 Supabase 作为事实源，该目录已移除。
 
-想先理解系统怎么跑起来的，读 [`docs/architecture/system-overview.md`](docs/architecture/system-overview.md)：分层、一次受治理写入的真实路径、项目五阶段与门、以及当前明确记录的架构债务。
+想先理解系统怎么跑起来的，读 [`docs/architecture/system-overview.md`](docs/architecture/system-overview.md)：分层、一次受治理写入的真实路径、项目七阶段与门、以及当前明确记录的架构债务。
 
 ## 本地启动
 

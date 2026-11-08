@@ -39,9 +39,10 @@
                 │
 ┌───────────────▼────────────────────────────────────────────────────────┐
 │                            领域层（无框架依赖）                          │
-│  projects/vs01  ·  command-kernel  ·  materials  ·  evidence           │
-│  workpapers     ·  experience-intelligence  ·  assistant  ·  intake    │
-│  identity/access-policy  ·  task-orchestration                         │
+│  read-model     ·  projects       ·  command-kernel  ·  materials      │
+│  evidence       ·  workpapers     ·  experience    ·  experience-intelligence │
+│  assistant      ·  intake         ·  identity/access-policy            │
+│  task-orchestration  ·  tasks                                         │
 └───────────────┬────────────────────────────────────────────────────────┘
                 │  只有这里碰 SQL
 ┌───────────────▼────────────────────────────────────────────────────────┐
@@ -110,7 +111,7 @@ PostgreSQL（RLS 兜底：即使应用层漏了 tenant 条件，行级策略仍�
 
 ## 5. 项目状态机与阶段门
 
-项目不是一个状态字段，是**五个阶段 + 每阶段一道门**：
+项目不是一个状态字段，是**七个阶段 + 每阶段一道门**。前两个阶段随项目一同建立、随即完成——`PROJECT_SCOPING`（明确要解决的问题）与 `BASELINE_FACTS`（核清事实）——所以下面从第三个阶段画起：
 
 ```text
 ROOT_CAUSE_VALIDATION   根因验证    ── 证据 + 工作底稿，员工确认

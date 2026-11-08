@@ -181,4 +181,71 @@ describe("documented commands exist", () => {
         broken.join("\n"),
     ).toEqual([]);
   });
+
+  it("counts the consulting stages the way the code does", async () => {
+    // The stages are defined in one place. A document that says "five
+    // stages" when the code has seven is a document nobody should trust,
+    // and it is exactly the kind of drift a reader cannot notice.
+    const stagesSource = await readFile(
+      join(repositoryRoot, "apps/api/src/work-stages.ts"),
+      "utf8",
+    );
+    const namesBlock = stagesSource.slice(
+      stagesSource.indexOf("export const workStageNames = {"),
+    );
+    const stageCount = (
+      namesBlock.slice(0, namesBlock.indexOf("}")).match(/^[ \t]*[A-Z_]+:/gm) ??
+      []
+    ).length;
+    expect(stageCount).toBeGreaterThan(0);
+
+    const chineseDigits: Record<string, number> = {
+      一: 1,
+      二: 2,
+      两: 2,
+      三: 3,
+      四: 4,
+      五: 5,
+      六: 6,
+      七: 7,
+      八: 8,
+      九: 9,
+      十: 10,
+    };
+    const parseCount = (token: string): number | undefined => {
+      if (/^\d+$/.test(token)) return Number(token);
+      if (token.length === 1) return chineseDigits[token];
+      if (token.startsWith("十"))
+        return 10 + (chineseDigits[token.slice(1)] ?? 0);
+      if (token.endsWith("十"))
+        return (chineseDigits[token.slice(0, -1)] ?? 0) * 10;
+      return undefined;
+    };
+
+    const mismatched: string[] = [];
+    for (const file of [
+      "README.md",
+      "docs/architecture/system-overview.md",
+      "CONTEXT.md",
+    ]) {
+      const text = await readFile(join(repositoryRoot, file), "utf8");
+      for (const match of text.matchAll(
+        /(?<![第每前])([零一二三四五六七八九十]+|\d+)\s*个?\s*阶段/g,
+      )) {
+        const token = match[1];
+        if (!token) continue;
+        const stated = parseCount(token);
+        if (stated === undefined || stated === stageCount) continue;
+        mismatched.push(
+          `${file}: 写着「${match[0].trim()}」，代码里是 ${stageCount} 个阶段`,
+        );
+      }
+    }
+
+    expect(
+      mismatched,
+      "文档里的阶段数与代码不一致。请改文档，别改数字了事。\n" +
+        mismatched.join("\n"),
+    ).toEqual([]);
+  });
 });
