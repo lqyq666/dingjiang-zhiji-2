@@ -161,35 +161,35 @@ KNOWLEDGE_CAPTURE       经验沉淀    ── 经验候选 → 专家审核 →
 
 ## 8. 已知的架构债务（不美化）
 
-### 8.1 `apps/api/src/vs01.service.ts`：1779 行、52 个方法
+### 8.1 `apps/api/src/vs01.service.ts`：423 行、一个门面
 
-它曾经是全仓库最大的单点问题，5261 行、94 个方法、六七个上下文混在一个类里。现在它只剩三个上下文，其余都搬到了自己的模块：
+它曾经是全仓库最大的单点问题：5261 行、94 个方法、六个上下文混在一个类里。现在它是一层门面——保留所有对外方法签名，把实现交给六个各自负责的服务：
 
-| 关注点             | 代表方法                                                                     | 位置                           |
-| ------------------ | ---------------------------------------------------------------------------- | ------------------------------ |
-| 读模型             | `employee` `boss` `task` `project` `findProject`                             | `read-model/`                  |
-| 材料登记/导入/撤回 | `addTaskMaterial` `importTaskMaterial`                                       | `materials/`                   |
-| 项目与阶段推进     | `createProject` `submitProject` `updateSubtask` `reviewExecutionPhase`       | `projects/`                    |
-| AI 助手与引导分析  | `assistTask` `assistProject`                                                 | `assistant/`（引导逻辑已搬出） |
-| 经验资产生命周期   | `createExperienceCandidate` `approveExperienceCandidate` `retractExperience` | 仍在原处                       |
-| 任务接入与决策     | `decideTask` `revertTaskDecision`                                            | 仍在原处                       |
+| 模块          | 负责                 | 关键方法                                         |
+| ------------- | -------------------- | ------------------------------------------------ |
+| `read-model/` | 只读投影             | `employee` `boss` `task` `project` `findProject` |
+| `materials/`  | 材料登记、导入、撤回 | `importTaskMaterial` `materialById`              |
+| `projects/`   | 项目状态机           | `createProject` `updateSubtask` `taskTemplates`  |
+| `experience/` | 经验资产生命周期     | `approveExperienceCandidate` `retractExperience` |
+| `assistant/`  | AI 引导与反馈        | `assistProject` `createAssistantFeedback`        |
+| `tasks/`      | 任务决策与回退       | `decideTask` `revertTaskDecision`                |
 
-搬走的四块，以及每一块真正的难点：
+搬移的顺序是按耦合度从低到高，每一步都以全量用例做回归护栏：
 
-1. **AI 引导分析**（八个纯函数）→ `assistant/guided-analysis.ts`。零事务、零状态写入，只读契约对象，是耦合度最低的一块。
-2. **材料子域**（四个命令 + `materialById`）→ `materials/material-service.ts`，投影函数拆到 `material-projection.ts` 由读模型与写命令共享。
-3. **读模型**（十三个只读入口 + 十一个 helper，含 303 行的 `findProject`）→ `read-model/read-model-service.ts`。读只读的部分原本是一张网——`projects()` 调 `project()`，`project()` 调 `findProject()`，看板再调前两个——所以整张网一起搬。
-4. **项目状态机**（十个命令 + `taskTemplates` 等十二个 helper）→ `projects/project-lifecycle-service.ts`。
+1. **AI 引导分析**（八个纯函数）→ `assistant/guided-analysis.ts`。零事务、零状态写入，是耦合度最低的一块。
+2. **材料子域** → `materials/material-service.ts`，投影拆到 `material-projection.ts` 由读写两侧共享。
+3. **读模型** → `read-model/read-model-service.ts`。只读的部分原本是一张网——`projects()` 调 `project()`，`project()` 调 `findProject()`——所以整张网一起搬。
+4. **项目状态机** → `projects/project-lifecycle-service.ts`。
+5. **经验资产** → `experience/experience-service.ts`。因为上一轮已把共享写原语抽走，这一步最省力。
+6. **AI 助手与任务决策** → `assistant/assistant-service.ts`、`tasks/task-decision-service.ts`。
 
-**事务纪律是每一次搬移都要守的东西。** 绑定实例跑在命令内核的事务内，绝不 commit / rollback / release 调用方的 client；独立实例自己开自己关。状态机的每个命令都以"写完再读回"结束，那次读必须走同一个事务，否则返回的是数据库还没提交的状态——所以读模型是状态机的协作者，不是便利工具。
+**每一次搬移都要守的东西是事务纪律。** 绑定实例跑在命令内核的事务内，绝不 commit / rollback / release 调用方的 client；独立实例自己开自己关。命令都以"写完再读回"结束，那次读必须走同一个事务，否则返回的是数据库还没提交的状态——所以读模型是各写入服务的协作者，不是便利工具。
 
-三方共享的写原语（追加项目事件、锁定项目节点、校验操作者）抽到了 `projects/project-primitives.ts`，两边共同 import，不复制。七个阶段的名字、目的与模板抽到 `work-stages.ts`。
+三方共享的写原语（追加项目事件、锁定项目节点、校验操作者）抽到 `projects/project-primitives.ts`；七个阶段的名字、目的与模板抽到 `work-stages.ts`；两个跨读写共用的投影抽到 `read-model/projections.ts`。都是普通函数或常量，两侧共同 import，不复制。
 
 同时删掉了 `projectTransition`（生产零调用、只有测试在测的死代码）以及 `date` / `delay` 两个只是 `isoDate` / `delayDays` 的薄包装。
 
-**剩下的经验资产与任务接入建议再开一轮。** 经验资产与状态机共享写原语，耦合比前两块高；任务接入小，但要与决策回滚一起搬。
-
-`tooling/architecture/boundaries.test.ts` 的尺寸棘轮守着这个文件不许再长大，预算随每次拆分同步下调（5261 → 4888 → 4642 → 3560 → 1779）。
+`tooling/architecture/boundaries.test.ts` 的尺寸棘轮守着这个文件不许再长大，预算随每次拆分同步下调（5261 → 4888 → 4642 → 3560 → 1779 → 423）。
 
 ### 8.2 其他已记录的债务
 
