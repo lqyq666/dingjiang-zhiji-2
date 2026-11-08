@@ -17,39 +17,5 @@ services:
     volumes:
       - postgres-data:/var/lib/postgresql/data
 
-  redis:
-    image: redis:7.4-alpine
-    ports:
-      - "6379:6379"
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-
-  meilisearch:
-    image: getmeili/meilisearch:v1.30
-    environment:
-      MEILI_ENV: development
-      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:-local-only-master-key}
-    ports:
-      - "7700:7700"
-    volumes:
-      - meilisearch-data:/meili_data
-
-  minio:
-    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
-    command: server /data --console-address ":9001"
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-dingjiang-local}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-dingjiang-local-password}
-    ports:
-      - "9000:9000"
-      - "9001:9001"
-    volumes:
-      - minio-data:/data
-
 volumes:
-  meilisearch-data:
-  minio-data:
   postgres-data:

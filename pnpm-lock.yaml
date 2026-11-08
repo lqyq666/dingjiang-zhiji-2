@@ -104,19 +104,11 @@ importers:
         specifier: 4.3.3
         version: 4.3.3
 
-  apps/worker:
-    devDependencies:
-      tsx:
-        specifier: 4.23.12
-        version: 4.23.12
-
   packages/contracts:
     dependencies:
       zod:
         specifier: 4.4.3
         version: 4.4.3
-
-  packages/shared-kernel: {}
 
   services/dingjiang-mcp:
     dependencies:
@@ -126,8 +118,6 @@ importers:
       zod:
         specifier: 4.4.3
         version: 4.4.3
-
-  services/ml-service: {}
 
   tooling/architecture: {}
 

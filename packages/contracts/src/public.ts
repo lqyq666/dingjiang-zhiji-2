@@ -14,7 +14,7 @@ export * from "./material-verification";
 export * from "./evidence-intake";
 
 export const healthResponseSchema = z.object({
-  service: z.enum(["api", "ml-service", "web"]),
+  service: z.enum(["api", "web"]),
   status: z.literal("ok"),
 });
 

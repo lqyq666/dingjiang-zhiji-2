@@ -9,7 +9,7 @@
 
 ## Decision
 
-Use a pnpm and Turborepo monorepo with four runtime entries: Next.js Web, NestJS API, TypeScript Worker, and Python/FastAPI ML service. Start with only two shared packages: contracts and shared-kernel. Add business packages when their first real use case arrives.
+Use a pnpm and Turborepo monorepo with three runtime entries: Next.js Web, NestJS API, and the WorkBuddy MCP adapter. Start with one shared package (contracts); add business packages when their first real use case arrives. The Worker and ML service were part of the original four-entry plan, but their first use case never arrived, so their empty shells were removed in favour of honest boundaries rather than scaffolding that pretends to run.
 
 Use module-root exports and executable architecture tests. Keep PostgreSQL as the future fact source, but create no Phase 0.2 schema during repository foundation.
 
@@ -18,5 +18,4 @@ Use module-root exports and executable architecture tests. Keep PostgreSQL as th
 - Each runtime can start and build independently.
 - Shared transport validation has one explicit interface.
 - Package proliferation is deferred until behavior exists.
-- Python uses uv beside pnpm; CI must install both toolchains.
 - Phase 0.2 must add explicit SQL migrations and tenant isolation tests before business data is introduced.
