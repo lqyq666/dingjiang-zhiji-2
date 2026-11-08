@@ -1,6 +1,6 @@
 import { existsSync, statSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
-import { extname, join, relative, resolve, sep } from "node:path";
+import { dirname, extname, join, relative, resolve, sep } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const repositoryRoot = resolve(process.cwd(), "../..");
@@ -152,6 +152,33 @@ describe("documented commands exist", () => {
       missing,
       "文档里引用了不存在的命令。请改文档，或把命令加进 package.json。\n" +
         missing.join("\n"),
+    ).toEqual([]);
+  });
+
+  it("only links to files that exist", async () => {
+    const files: string[] = [];
+    for (const target of documentationRoots)
+      files.push(...(await collectFiles(target)));
+
+    const broken: string[] = [];
+    for (const file of files) {
+      const text = await readFile(file, "utf8");
+      const where = relative(repositoryRoot, file).split(sep).join("/");
+      for (const match of text.matchAll(/\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g)) {
+        const target = match[1];
+        if (!target) continue;
+        if (/^(https?:|mailto:|#)/.test(target)) continue;
+        if (target.startsWith("/")) continue;
+        const resolved = resolve(dirname(file), target.split("#")[0] ?? target);
+        if (!existsSync(resolved))
+          broken.push(`${where}: 链接指向不存在的 ${target}`);
+      }
+    }
+
+    expect(
+      broken,
+      "文档里的相对链接指向了不存在的文件。请改链接，或补回文件。\n" +
+        broken.join("\n"),
     ).toEqual([]);
   });
 });

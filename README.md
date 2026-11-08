@@ -137,6 +137,17 @@ pnpm --filter @dingjiang/mcp eval
 
 MCP 工具面除参数 schema 外还声明 `annotations`（读写、破坏性、幂等、开放世界）与 `outputSchema`：宿主据此决定是否在受治理写入口前弹确认，而 `outputSchema` 直接取自已用于校验响应的 Zod schema，因此 `structuredContent` 与声明同构是构造出来的。设计取舍见 `services/dingjiang-mcp/README.md`。
 
+## 延伸阅读
+
+| 文档                                       | 内容                                                               |
+| ------------------------------------------ | ------------------------------------------------------------------ |
+| [CONTEXT.md](CONTEXT.md)                   | 领域词汇表：经营问题、咨询任务、工作步骤、执行事项、工作上下文快照 |
+| [PRODUCT.md](PRODUCT.md)                   | 产品定位、角色与业务目标                                           |
+| [DESIGN.md](DESIGN.md)                     | Web 端设计系统：OKLCH 色板、层级与排版规则                         |
+| [docs/architecture/](docs/architecture/)   | 系统全景、系统不变量、集成就绪度与各子系统边界                     |
+| [docs/api-surface.md](docs/api-surface.md) | 全部 85 条 HTTP 路由（自动生成，带防漂移守卫）                     |
+| [CONTRIBUTING.md](CONTRIBUTING.md)         | 怎么跑起来、改动要过哪些门禁、提交信息怎么写                       |
+
 ## 开源状态
 
 本仓库依据 [Apache License 2.0](LICENSE) 开源：允许自由使用、复制、修改、分发与商用（含闭源衍生作品），无需额外授权。分发时需附带许可证原文、保留版权声明、标明改动，并附上 [NOTICE](NOTICE)。选用 Apache-2.0 而不是 MIT，是因为它额外包含明确的专利授权与专利诉讼终止条款——对可能二次开发的人更省事，也和这个项目"每一步都可追溯"的基调一致。

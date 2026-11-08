@@ -11,4 +11,4 @@ These rules define correctness across every milestone.
 7. Web calls the API. Domain code is independent from NestJS, Drizzle, model SDKs, and transport details.
 8. Cross-package imports use the package root. Architecture tests enforce dependency direction.
 9. Vendor-dependent behavior enters through a seam only when a real alternative or test adapter exists.
-10. Codex may perform ordinary remote deployment within a frozen Task Contract and must retain deployment and online-verification evidence. Production database or authentication changes require a controlled change, recovery path and audit evidence; new paid purchases, Secret exposure, unrecoverable important remote deletion, contracts and material customer commitments remain hard boundaries.
+10. Deployment happens inside a frozen scope and keeps deployment and online-verification evidence. Production database or authentication changes require a controlled change, a recovery path and audit evidence; new paid purchases, secret exposure, unrecoverable important remote deletion, contracts and material customer commitments remain hard boundaries.

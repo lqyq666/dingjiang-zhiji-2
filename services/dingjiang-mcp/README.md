@@ -91,7 +91,7 @@ pnpm --filter @dingjiang/mcp eval
 
 新增权限不会自动授予旧 token：PMC 需要 workitem:write；材料核验/证据确认分别需要 material:verify / evidence:confirm；OWNER 定稿需要 project:approve；EXPERT_REVIEWER 发布需要 experience:publish。新事件必须有明确的预留项目白名单项，例如 PRJ-SO-202608136，workspace.events 才会提供入口。现有项目继续使用原 ID。
 
-仓库候选版本为 0.7.0（新增工具元数据与版本协商）；`.ai-dev/WORKBUDDY_RUNTIME.json` 仍记录已部署基线。只有正式同步 bundle、服务端 bindings 和 runtime checkout 并通过真实会话验证后，才能声明接通。
+仓库候选版本为 0.7.0（新增工具元数据与版本协商）。只有正式同步 bundle、服务端 bindings 和 runtime checkout 并通过真实会话验证后，才能声明接通。
 
 不存在工作底稿或材料正文时返回安全的 NOT_FOUND/BODY_NOT_AVAILABLE 语义，不伪造内容；材料预览不返回原始 bytes、绝对路径或存储键。
 
