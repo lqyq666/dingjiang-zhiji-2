@@ -161,30 +161,35 @@ KNOWLEDGE_CAPTURE       经验沉淀    ── 经验候选 → 专家审核 →
 
 ## 8. 已知的架构债务（不美化）
 
-### 8.1 `apps/api/src/vs01.service.ts`：3560 行、67 个方法
+### 8.1 `apps/api/src/vs01.service.ts`：1779 行、52 个方法
 
-这是全仓库最大的单点问题。它现在只承担四个上下文：
+它曾经是全仓库最大的单点问题，5261 行、94 个方法、六七个上下文混在一个类里。现在它只剩三个上下文，其余都搬到了自己的模块：
 
-| 关注点              | 代表方法                                                                     | 大致行数 | 状态                   |
-| ------------------- | ---------------------------------------------------------------------------- | -------- | ---------------------- |
-| 任务/订单接入与决策 | `decideTask` `revertTaskDecision`                                            | ~250     | 留在原处               |
-| 材料登记/导入/撤回  | `addTaskMaterial` `importTaskMaterial` `materialProjection`                  | 0        | 已搬出（−245）         |
-| 项目与阶段推进      | `createProject` `submitProject` `updateSubtask` `reviewExecutionPhase`       | ~1400    | 留在原处               |
-| AI 助手与引导分析   | `assistTask` `assistProject`                                                 | ~600     | 引导逻辑已搬出（−320） |
-| 经验资产生命周期    | `createExperienceCandidate` `approveExperienceCandidate` `retractExperience` | ~1100    | 留在原处               |
-| 读模型/投影         | `employee` `boss` `task` `project` `findProject`                             | 0        | 已搬出（−1079）        |
+| 关注点             | 代表方法                                                                     | 位置                           |
+| ------------------ | ---------------------------------------------------------------------------- | ------------------------------ |
+| 读模型             | `employee` `boss` `task` `project` `findProject`                             | `read-model/`                  |
+| 材料登记/导入/撤回 | `addTaskMaterial` `importTaskMaterial`                                       | `materials/`                   |
+| 项目与阶段推进     | `createProject` `submitProject` `updateSubtask` `reviewExecutionPhase`       | `projects/`                    |
+| AI 助手与引导分析  | `assistTask` `assistProject`                                                 | `assistant/`（引导逻辑已搬出） |
+| 经验资产生命周期   | `createExperienceCandidate` `approveExperienceCandidate` `retractExperience` | 仍在原处                       |
+| 任务接入与决策     | `decideTask` `revertTaskDecision`                                            | 仍在原处                       |
 
-它没有变坏，是因为**每次改动都太小**。这类债务的正确处理方式不是"找时间重写"，而是按耦合度从低到高一块块搬，每搬一块都用全量用例做回归护栏。已经搬走的三块：
+搬走的四块，以及每一块真正的难点：
 
-1. **AI 引导分析**（`currentWorkStage` `guidedAnalysis*` `nextConsultingAction` `experienceDraft` `answerConsultingQuestion` 等八个纯函数）→ `apps/api/src/assistant/guided-analysis.ts`。零事务、零状态写入，只读契约对象，是耦合度最低的一块。
-2. **材料子域**（四个命令 + `materialById`）→ `apps/api/src/materials/material-service.ts`，投影函数拆到 `material-projection.ts` 由读模型与写命令共享。难点在事务 seam：绑定实例跑在命令内核事务内，绝不 commit / rollback / release 调用方的 client，独立实例自己开自己关；导入路径上"临时键与最终键都要 discard"的补偿逻辑一并搬了过去。
-3. **读模型**（十三个只读入口 + `findProject` 等十一个 helper）→ `apps/api/src/read-model/read-model-service.ts`。两个投影（`formalExperienceView` `materialSituationForInput`）写命令也要用，放在 `read-model/projections.ts` 由两边共同 import，不复制。
+1. **AI 引导分析**（八个纯函数）→ `assistant/guided-analysis.ts`。零事务、零状态写入，只读契约对象，是耦合度最低的一块。
+2. **材料子域**（四个命令 + `materialById`）→ `materials/material-service.ts`，投影函数拆到 `material-projection.ts` 由读模型与写命令共享。
+3. **读模型**（十三个只读入口 + 十一个 helper，含 303 行的 `findProject`）→ `read-model/read-model-service.ts`。读只读的部分原本是一张网——`projects()` 调 `project()`，`project()` 调 `findProject()`，看板再调前两个——所以整张网一起搬。
+4. **项目状态机**（十个命令 + `taskTemplates` 等十二个 helper）→ `projects/project-lifecycle-service.ts`。
 
-同时删掉了 `projectTransition`——生产零调用、只有测试在测的死代码——以及 `date` / `delay` 两个只是 `isoDate` / `delayDays` 的薄包装。
+**事务纪律是每一次搬移都要守的东西。** 绑定实例跑在命令内核的事务内，绝不 commit / rollback / release 调用方的 client；独立实例自己开自己关。状态机的每个命令都以"写完再读回"结束，那次读必须走同一个事务，否则返回的是数据库还没提交的状态——所以读模型是状态机的协作者，不是便利工具。
 
-**剩下的部分建议单独开一轮。** 项目状态机与经验资产通过 `appendProjectEvent`、`projectNodeId` 等共享写原语互相纠缠，`createProject` 又是"上帝方法"；搬它们需要比现在更宽的回归窗口，不该混在一起做。
+三方共享的写原语（追加项目事件、锁定项目节点、校验操作者）抽到了 `projects/project-primitives.ts`，两边共同 import，不复制。七个阶段的名字、目的与模板抽到 `work-stages.ts`。
 
-`tooling/architecture/boundaries.test.ts` 的尺寸棘轮守着这个文件不许再长大，预算随每次拆分同步下调（5261 → 4888 → 4642 → 3560）。
+同时删掉了 `projectTransition`（生产零调用、只有测试在测的死代码）以及 `date` / `delay` 两个只是 `isoDate` / `delayDays` 的薄包装。
+
+**剩下的经验资产与任务接入建议再开一轮。** 经验资产与状态机共享写原语，耦合比前两块高；任务接入小，但要与决策回滚一起搬。
+
+`tooling/architecture/boundaries.test.ts` 的尺寸棘轮守着这个文件不许再长大，预算随每次拆分同步下调（5261 → 4888 → 4642 → 3560 → 1779）。
 
 ### 8.2 其他已记录的债务
 

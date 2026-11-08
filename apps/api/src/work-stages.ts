@@ -22,3 +22,41 @@ export const workStagePurposes = {
   RESULT_ACCEPTANCE: "按同一口径确认实际经营结果",
   KNOWLEDGE_CAPTURE: "把经过验证的做法整理为有边界的候选经验",
 } as const;
+
+export const phases = [
+  [
+    "PROJECT_SCOPING",
+    workStageNames.PROJECT_SCOPING,
+    workStagePurposes.PROJECT_SCOPING,
+  ],
+  [
+    "BASELINE_FACTS",
+    workStageNames.BASELINE_FACTS,
+    workStagePurposes.BASELINE_FACTS,
+  ],
+  [
+    "ROOT_CAUSE_VALIDATION",
+    workStageNames.ROOT_CAUSE_VALIDATION,
+    workStagePurposes.ROOT_CAUSE_VALIDATION,
+  ],
+  [
+    "SOLUTION_APPROVAL",
+    workStageNames.SOLUTION_APPROVAL,
+    workStagePurposes.SOLUTION_APPROVAL,
+  ],
+  [
+    "EXECUTION_CONTROL",
+    workStageNames.EXECUTION_CONTROL,
+    workStagePurposes.EXECUTION_CONTROL,
+  ],
+  [
+    "RESULT_ACCEPTANCE",
+    workStageNames.RESULT_ACCEPTANCE,
+    workStagePurposes.RESULT_ACCEPTANCE,
+  ],
+  [
+    "KNOWLEDGE_CAPTURE",
+    workStageNames.KNOWLEDGE_CAPTURE,
+    workStagePurposes.KNOWLEDGE_CAPTURE,
+  ],
+] as const;
