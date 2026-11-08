@@ -44,6 +44,32 @@ Integration client 将失败分为三类，避免把服务端问题误报为调�
 
 `DINGJIANG_MCP_TIMEOUT_MS` 配置请求超时（默认 10000，范围 100–120000）。超时错误仍要求复用原 requestId / correlationId 核对，不得改 requestId 重试。`DINGJIANG_API_BASE_URL` 的校验结果按原始值缓存，环境变量变化时立即重新校验；loopback HTTP 覆盖完整 `127.0.0.0/8`，并拒绝 `127.0.0.1.evil.com` 这类伪装主机。
 
+## 工具元数据：让治理边界对宿主可见
+
+`tools/list` 不只是参数表。宿主用它决定调用前是否弹确认、结果能否当不可信外部内容、界面上显示什么名字。而协议的默认值对治理型服务最不利：什么都不声明时 `readOnlyHint` 为 false、`destructiveHint` 为 true、`openWorldHint` 为 true——22 个只读工具在宿主眼里和写入口没有区别，宿主只能选择对每次读取都弹框，或者干脆忽略提示。
+
+因此每个工具都必须先在 `toolGovernance` 表登记读写分类；`annotationsFor` 查不到条目时直接抛错（fail closed），而不是退回默认值——默认值会把真正的写入口淹在一堆误报里。
+
+| 维度              | 只读工具（22） | 受治理写入口（6） |
+| ----------------- | -------------- | ----------------- |
+| `readOnlyHint`    | `true`         | `false`           |
+| `destructiveHint` | `false`        | `true`            |
+| `idempotentHint`  | `true`         | `true`            |
+| `openWorldHint`   | `false`        | `false`           |
+| `title`           | 中文动作名     | 中文动作名        |
+
+`idempotentHint` 全为 `true` 不是偷懒：读工具天然幂等；写工具的幂等性来自契约本身——`requestId` 是受治理命令的幂等键，相同 `requestId` + `expectedVersion` 重放返回原回执，这也正是超时必须复用原 requestId 而不能新生成的原因。
+
+规范明确 annotations 只是**不可信提示**，不能作为授权依据。本服务不靠它做权限判断：角色、scope、阶段与完成条件仍由 Integration API 校验，annotations 只影响宿主 UX。
+
+`outputSchema` 由 25 个工具声明，直接取自 client 校验响应所用的那批 Zod schema（`z.toJSONSchema(schema, { io: "output" })`），所以 `structuredContent` 与声明同构是构造出来的，不是承诺出来的。三个聚合工具（`workspace.resume`、`work.context`、`evidence.bundle`）刻意不声明：它们是多个 payload 的拼装结果，写一个猜出来的 schema 只会得到一份会漂移的契约。`project.next_action` 相反——输出是本服务自建对象，于是定义了显式 schema 并在返回前 `parse`，使 `classification` 不可能出现 `PROPOSAL` 之外的值。
+
+`initialize` 结果携带 `instructions`，把治理不变量（PROPOSAL 不是 FACT、写前必读 `work.operations`、超时复用 requestId、定稿仅 OWNER / 发布仅 EXPERT_REVIEWER）交给客户端放进模型上下文，而不是指望每个宿主的提示词恰好写对。
+
+协议版本按会话协商：`2025-06-18` 支持 `outputSchema`，`2025-03-26` 不支持，因此面向后者发起的会话不下发该字段——给旧客户端塞它无法表达的字段，只会让校验形同虚设。`Object.hasOwn` 而非 `in` 判断版本键，避免 `toString`/`__proto__` 被当成合法修订版。
+
+`src/tool-contract.test.ts` 把这些元数据钉在入参契约上：受治理写入口的唯一结构特征是同时必填 `requestId` 与 `expectedVersion`，测试据此反推写集合，再断言没有任何写入口被标成只读——标注与实现无法一起悄悄漂移。
+
 ## 工具契约评测
 
 `evals/` 提供可回归的契约评测，直接驱动 `dist/` 中的真实 dispatcher，Integration 侧使用确定性 mock，不依赖网络、数据库或模型凭据：
@@ -53,7 +79,7 @@ pnpm --filter @dingjiang/mcp build
 pnpm --filter @dingjiang/mcp eval
 ```
 
-当前基线：声明的 28 个工具全部可达（无 `UNKNOWN_TOOL`）；24 个读写 happy path 返回 `structuredContent` 并命中预期 Integration 方法；7 类越权字段注入全部 `INVALID_REQUEST` 且零 Integration 调用；6 类非法参数全部被拒；传输超时结构化收敛且不泄露授权头；6 项协议契约通过。任一不变量失败时退出码为 1，CI 会阻断合并。用例格式与扩展方式见 `evals/README.md`。
+当前基线：声明的 28 个工具全部可达（无 `UNKNOWN_TOOL`）；28 个工具的 annotations 与 `outputSchema`（25 个）在 wire 层完备且读/写标注与入参契约一致；24 个读写 happy path 返回 `structuredContent` 并命中预期 Integration 方法；7 类越权字段注入全部 `INVALID_REQUEST` 且零 Integration 调用；6 类非法参数全部被拒；传输超时结构化收敛且不泄露授权头；6 项协议契约通过。任一不变量失败时退出码为 1，CI 会阻断合并。用例格式与扩展方式见 `evals/README.md`。
 
 ## 工具边界
 
@@ -65,6 +91,6 @@ pnpm --filter @dingjiang/mcp eval
 
 新增权限不会自动授予旧 token：PMC 需要 workitem:write；材料核验/证据确认分别需要 material:verify / evidence:confirm；OWNER 定稿需要 project:approve；EXPERT_REVIEWER 发布需要 experience:publish。新事件必须有明确的预留项目白名单项，例如 PRJ-SO-202608136，workspace.events 才会提供入口。现有项目继续使用原 ID。
 
-仓库候选版本为 0.6.0；`.ai-dev/WORKBUDDY_RUNTIME.json` 仍记录已部署基线。只有正式同步 bundle、服务端 bindings 和 runtime checkout 并通过真实会话验证后，才能声明接通。
+仓库候选版本为 0.7.0（新增工具元数据与版本协商）；`.ai-dev/WORKBUDDY_RUNTIME.json` 仍记录已部署基线。只有正式同步 bundle、服务端 bindings 和 runtime checkout 并通过真实会话验证后，才能声明接通。
 
 不存在工作底稿或材料正文时返回安全的 NOT_FOUND/BODY_NOT_AVAILABLE 语义，不伪造内容；材料预览不返回原始 bytes、绝对路径或存储键。

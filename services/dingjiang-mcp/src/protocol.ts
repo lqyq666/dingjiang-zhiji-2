@@ -1,22 +1,290 @@
 import { z } from "zod";
 import {
   workExecutionRequestSchema,
+  workExecutionContextSchema,
   materialVerificationRequestSchema,
   materialVerificationPayloadSchema,
+  materialVerificationResultSchema,
   evidenceConfirmationRequestSchema,
   evidenceConfirmationPayloadSchema,
+  evidenceConfirmationResultSchema,
   workpaperProposalPayloadSchema,
   workpaperProposeRequestSchema,
+  workpaperProposeResultSchema,
   materialCreatePayloadSchema,
   materialCreateRequestSchema,
+  materialCreateResultSchema,
   evidenceProposalPayloadSchema,
   evidenceProposeRequestSchema,
+  evidenceProposeResultSchema,
+  governedCommandResultSchema,
+  integrationCurrentWorkItemSchema,
+  integrationEvidenceDetailSchema,
+  integrationEvidenceListSchema,
+  integrationExperienceEvidenceSchema,
+  integrationExperienceSearchSchema,
+  integrationFormalExperienceSchema,
+  integrationMaterialListSchema,
+  integrationMaterialPreviewSchema,
+  integrationProjectContextSchema,
+  integrationProjectListSchema,
+  integrationProjectStateSchema,
+  integrationSourceVersionSchema,
+  integrationValidationWorkpaperSchema,
+  integrationWorkItemListSchema,
 } from "@dingjiang/contracts";
 
-import { IntegrationClientError, IntegrationTransportError } from "./client";
+import {
+  IntegrationClientError,
+  IntegrationTransportError,
+  integrationEventsSchema,
+} from "./client";
 import type { DingjiangIntegrationClient } from "./client";
 
-const protocolVersion = "2025-06-18";
+export const latestProtocolVersion = "2025-06-18";
+
+/**
+ * Revision-gated tool features.
+ *
+ * Advertising the newest fields to a client that negotiated an older revision
+ * is not a favour: a strict client rejects a tool descriptor it cannot
+ * validate, and a lenient one silently accepts a shape it will never check.
+ * The surface is therefore assembled per negotiated revision instead of
+ * assuming every client speaks the newest one.
+ */
+const protocolRevisions: Record<string, { structuredToolOutput: boolean }> = {
+  "2025-06-18": { structuredToolOutput: true },
+  "2025-03-26": { structuredToolOutput: false },
+};
+
+export const supportedProtocolVersions: readonly string[] =
+  Object.keys(protocolRevisions);
+
+const structuredToolOutputFor = (revision: string): boolean =>
+  protocolRevisions[revision]?.structuredToolOutput ?? true;
+
+/**
+ * Echo the revision the caller asked for when it is supported, otherwise
+ * answer with the newest one we speak. `Object.hasOwn` rather than `in`, so a
+ * probe such as `toString` or `__proto__` cannot masquerade as a revision.
+ */
+const negotiateProtocolVersion = (requested: unknown): string =>
+  typeof requested === "string" && Object.hasOwn(protocolRevisions, requested)
+    ? requested
+    : latestProtocolVersion;
+
+/**
+ * Reported in `serverInfo`. Defined once and used by the handler, so the
+ * announced identity cannot lag the constant; `package.json` carries the
+ * release number for packaging, and the two are bumped together.
+ */
+export const serverVersion = "0.7.0";
+
+/**
+ * The governance contract handed to the client in the `initialize` result.
+ *
+ * Clients place this in the model context before the first tool call, which
+ * makes it the one supported way to state the product invariant in every host
+ * rather than depending on each host's prompt to be worded correctly.
+ */
+export const serverInstructions = [
+  "鼎江智绩治理型 MCP。PostgreSQL 是唯一业务事实源；工具返回的是服务端已授权的事实快照。",
+  "",
+  "必须遵守：",
+  "1. AI 归纳出的任何结论一律是 PROPOSAL，不得表述为 FACT、根因或已确认结论。",
+  "2. 调用 work.execute / material.verify / evidence.confirm / workpaper.propose / material.create / evidence.propose 前，先读 work.operations 取得最新 expectedVersion 与 allowedActions，向用户展示具体影响并取得本次确认；confirmation 保存用户原话，不得代写。",
+  "3. 超时或网络错误不得更换 requestId 重试，必须复用原 requestId 核对服务端状态。",
+  "4. 方案定稿仅 OWNER，经验发布仅 EXPERT_REVIEWER；工具不因调用方声明而放宽角色。",
+].join("\n");
+
+type JsonSchemaObject = {
+  [keyword: string]: unknown;
+  additionalProperties?: unknown;
+};
+
+export type ToolAnnotations = {
+  title: string;
+  readOnlyHint: boolean;
+  destructiveHint: boolean;
+  idempotentHint: boolean;
+  openWorldHint: boolean;
+};
+
+type ToolSeed = {
+  name: string;
+  description: string;
+  inputSchema: JsonSchemaObject;
+};
+
+export type ToolDescriptor = ToolSeed & {
+  annotations: ToolAnnotations;
+  outputSchema?: JsonSchemaObject;
+};
+
+type ToolKind = "read" | "governed-write";
+
+/**
+ * Governance classification per tool.
+ *
+ * Without annotations every tool inherits the protocol defaults
+ * (`readOnlyHint: false`, `destructiveHint: true`, `openWorldHint: true`), so a
+ * host cannot tell a GET-style lookup from a governed write: it either prompts
+ * before every read or — worse, if a write were mislabelled — skips the
+ * confirmation the whole model depends on. Classifying each tool explicitly is
+ * what makes the read/write boundary machine-readable.
+ */
+const toolGovernance = {
+  "workspace.events": { title: "列出授权事件与项目入口", kind: "read" },
+  "work.operations": { title: "读取操作版本与获准动作", kind: "read" },
+  "work.execute": { title: "记录进展、确认或提交方案", kind: "governed-write" },
+  "material.verify": { title: "记录材料人工核验", kind: "governed-write" },
+  "evidence.confirm": { title: "确认或驳回证据提案", kind: "governed-write" },
+  "workspace.resume": { title: "恢复当前项目全貌与下一动作", kind: "read" },
+  "work.context": { title: "读取项目完整工作上下文", kind: "read" },
+  "evidence.bundle": { title: "读取证据包与材料核验", kind: "read" },
+  "experience.search": { title: "检索已发布正式经验", kind: "read" },
+  "project.next_action": { title: "派生唯一可解释的下一动作", kind: "read" },
+  list_projects: { title: "列出授权咨询项目", kind: "read" },
+  get_current_project: { title: "读取当前咨询项目", kind: "read" },
+  get_project_context: { title: "读取项目工作上下文", kind: "read" },
+  get_project_state: { title: "读取项目状态与阶段", kind: "read" },
+  get_current_work_item: { title: "读取当前事项", kind: "read" },
+  list_project_work_items: { title: "列出阶段事项", kind: "read" },
+  list_evidence: { title: "列出可追溯事实证据", kind: "read" },
+  list_traceable_materials: { title: "列出材料摘要与核验状态", kind: "read" },
+  get_material_preview: { title: "读取材料安全摘要", kind: "read" },
+  get_evidence: { title: "读取单条事实证据", kind: "read" },
+  get_source_version: { title: "解析来源版本定位", kind: "read" },
+  get_validation_workpaper: { title: "读取根因核验工作底稿", kind: "read" },
+  search_formal_experiences: { title: "检索正式经验", kind: "read" },
+  get_formal_experience: { title: "读取单条正式经验", kind: "read" },
+  get_experience_evidence: { title: "读取经验引用的证据定位", kind: "read" },
+  "workpaper.propose": {
+    title: "追加根因核验或分析 Proposal",
+    kind: "governed-write",
+  },
+  "material.create": { title: "登记待核验材料版本", kind: "governed-write" },
+  "evidence.propose": { title: "登记证据 Proposal", kind: "governed-write" },
+} as const satisfies Record<string, { title: string; kind: ToolKind }>;
+
+/**
+ * Fails closed: a tool that is listed without a governance classification
+ * cannot be given honest hints, and the safe default would be to label it
+ * destructive — which hides the real writes among a wall of false ones.
+ */
+const annotationsFor = (name: string): ToolAnnotations => {
+  const entry = toolGovernance[name as keyof typeof toolGovernance] as
+    { title: string; kind: ToolKind } | undefined;
+  if (!entry)
+    throw new Error(
+      `Missing tool governance metadata for ${name}; every tool must declare whether it reads or writes before it can be listed`,
+    );
+  const governedWrite = entry.kind === "governed-write";
+  return {
+    title: entry.title,
+    readOnlyHint: !governedWrite,
+    destructiveHint: governedWrite,
+    // Same requestId + expectedVersion replays into the same receipt, because
+    // the governed command contract makes requestId the idempotency key. That
+    // is also why a timeout must reuse the original requestId instead of
+    // minting a new one. Reads are trivially idempotent.
+    idempotentHint: true,
+    // Every tool reaches the first-party Integration API scoped to the caller's
+    // token. None of them browse the open web, so their output must not be
+    // treated as untrusted external content by the host.
+    openWorldHint: false,
+  };
+};
+
+/**
+ * Shape of the single derived next action. It is declared here rather than
+ * inferred from the builder so that `classification` is a literal type: the
+ * derivation cannot start emitting `FACT` (or any other value) without a
+ * compile error, which is the cheapest possible guard for the one field an
+ * agent is most likely to over-read.
+ */
+const nextActionSchema = z
+  .object({
+    kind: z.enum(["WORK_ITEM", "MATERIAL_GAP", "HUMAN_GATE_OR_REVIEW"]),
+    projectId: z.string(),
+    workItemId: z.string().optional(),
+    requirementId: z.string().optional(),
+    title: z.string(),
+    responsibleRole: z.string().optional(),
+    explanation: z.string(),
+    classification: z.literal("PROPOSAL"),
+  })
+  .strict();
+
+type NextAction = z.infer<typeof nextActionSchema>;
+
+/**
+ * Declared output contracts, taken from the exact Zod schemas the client
+ * already validates each Integration response with. Deriving rather than
+ * hand-writing means a contract change cannot leave `outputSchema` behind, and
+ * `structuredContent` is conformant by construction rather than by promise.
+ *
+ * The aggregate tools (`workspace.resume`, `work.context`, `evidence.bundle`)
+ * are deliberately absent: their payload is an assembled composite, and
+ * declaring a guessed schema would be a contract the implementation can drift
+ * away from without anything failing.
+ */
+const outputContractSchemas: Record<string, z.ZodType> = {
+  "workspace.events": integrationEventsSchema,
+  "work.operations": workExecutionContextSchema,
+  "work.execute": governedCommandResultSchema,
+  "material.verify": materialVerificationResultSchema,
+  "evidence.confirm": evidenceConfirmationResultSchema,
+  list_projects: integrationProjectListSchema,
+  get_current_project: integrationProjectStateSchema,
+  get_project_context: integrationProjectContextSchema,
+  get_project_state: integrationProjectStateSchema,
+  get_current_work_item: integrationCurrentWorkItemSchema,
+  list_project_work_items: integrationWorkItemListSchema,
+  list_evidence: integrationEvidenceListSchema,
+  list_traceable_materials: integrationMaterialListSchema,
+  get_material_preview: integrationMaterialPreviewSchema,
+  get_evidence: integrationEvidenceDetailSchema,
+  get_source_version: integrationSourceVersionSchema,
+  get_validation_workpaper: integrationValidationWorkpaperSchema,
+  search_formal_experiences: integrationExperienceSearchSchema,
+  "experience.search": integrationExperienceSearchSchema,
+  get_formal_experience: integrationFormalExperienceSchema,
+  get_experience_evidence: integrationExperienceEvidenceSchema,
+  "workpaper.propose": workpaperProposeResultSchema,
+  "material.create": materialCreateResultSchema,
+  "evidence.propose": evidenceProposeResultSchema,
+  "project.next_action": nextActionSchema,
+};
+
+const outputSchemaFor = (name: string): JsonSchemaObject | undefined => {
+  const schema = outputContractSchemas[name];
+  if (!schema) return undefined;
+  // `io: "output"` describes what the server emits rather than what it accepts:
+  // an input-oriented schema would advertise defaulted fields as optional and
+  // let a client validate against a shape this server never returns.
+  return z.toJSONSchema(schema, { io: "output" }) as JsonSchemaObject;
+};
+
+/** Number of tools that declare an output contract; asserted by the tests. */
+export const outputContractToolCount = Object.keys(
+  outputContractSchemas,
+).length;
+
+/**
+ * Attaches governance metadata and the output contract to a declared tool.
+ * Applied at surface construction so the tool literals below stay readable
+ * schemas, and so a newly added tool cannot skip classification silently.
+ */
+const finalize = (tools: readonly ToolSeed[]): ToolDescriptor[] =>
+  tools.map((tool) => {
+    const outputSchema = outputSchemaFor(tool.name);
+    return {
+      ...tool,
+      annotations: annotationsFor(tool.name),
+      ...(outputSchema ? { outputSchema } : {}),
+    };
+  });
 
 type JsonRpcId = string | number | null;
 export type JsonRpcRequest = {
@@ -133,7 +401,7 @@ const evidenceConfirmInput = z
     payload: evidenceConfirmationPayloadSchema,
   })
   .strict();
-const operationTools = [
+const operationTools: ToolSeed[] = [
   {
     name: "workspace.events",
     description:
@@ -166,7 +434,7 @@ const operationTools = [
   },
 ];
 
-const compatibilityTools = [
+const compatibilityTools = finalize([
   ...operationTools,
   {
     name: "list_projects",
@@ -599,7 +867,7 @@ const compatibilityTools = [
       additionalProperties: false,
     },
   },
-] as const;
+]);
 
 const existingTool = (name: string) => {
   const tool = compatibilityTools.find((candidate) => candidate.name === name);
@@ -607,7 +875,7 @@ const existingTool = (name: string) => {
   return tool;
 };
 
-const businessTools = [
+const businessTools = finalize([
   ...operationTools,
   {
     name: "workspace.resume",
@@ -671,12 +939,30 @@ const businessTools = [
   existingTool("workpaper.propose"),
   existingTool("material.create"),
   existingTool("evidence.propose"),
-] as const;
+]);
 
-const toolSurface = () =>
-  process.env.DINGJIANG_MCP_TOOL_SURFACE === "compatibility"
-    ? compatibilityTools
-    : businessTools;
+/**
+ * Tool list for the revision this session negotiated.
+ *
+ * The order is the declaration order, not a dictionary walk: the protocol
+ * recommends a deterministic order so client-side prompt caching can reuse the
+ * tool block across turns instead of re-hashing a reshuffled list.
+ */
+const toolSurface = (structuredToolOutput: boolean): ToolDescriptor[] => {
+  const tools =
+    process.env.DINGJIANG_MCP_TOOL_SURFACE === "compatibility"
+      ? compatibilityTools
+      : businessTools;
+  if (structuredToolOutput) return [...tools];
+  // Older revisions have no `outputSchema`. Emitting the field anyway leaves
+  // the client validating against a contract its revision cannot express.
+  return tools.map((tool) => ({
+    name: tool.name,
+    description: tool.description,
+    inputSchema: tool.inputSchema,
+    annotations: tool.annotations,
+  }));
+};
 
 const safeToolError = (error: unknown) => {
   if (error instanceof IntegrationClientError)
@@ -767,13 +1053,22 @@ const loadEvidenceBundle = async (
   return { projectId, evidence, materials, workpaper, proposals };
 };
 
+/**
+ * Builds the single derived next action.
+ *
+ * The result is parsed through `nextActionSchema` rather than merely typed:
+ * `project.next_action` declares that schema as its `outputSchema`, and a
+ * hand-assembled object is exactly the place where a declared contract and the
+ * emitted payload drift apart. Parsing makes the declaration true at runtime
+ * and keeps `classification` pinned to PROPOSAL.
+ */
 const deriveNextAction = (
   state: Awaited<ReturnType<IntegrationClient["getProjectState"]>>,
   currentWorkItem: Awaited<ReturnType<IntegrationClient["getCurrentWorkItem"]>>,
   materials: Awaited<ReturnType<IntegrationClient["listTraceableMaterials"]>>,
-) => {
+): NextAction => {
   if (currentWorkItem.projectId === state.id && currentWorkItem.item)
-    return {
+    return nextActionSchema.parse({
       kind: "WORK_ITEM",
       projectId: state.id,
       workItemId: currentWorkItem.item.id,
@@ -781,24 +1076,24 @@ const deriveNextAction = (
       responsibleRole: currentWorkItem.item.owner,
       explanation: "当前服务端派生事项优先处理",
       classification: "PROPOSAL",
-    };
+    });
   const gap = materials.gaps[0];
   if (gap)
-    return {
+    return nextActionSchema.parse({
       kind: "MATERIAL_GAP",
       projectId: state.id,
       requirementId: gap.requirementId,
       title: gap.label,
       explanation: `材料缺口状态为 ${gap.status}`,
       classification: "PROPOSAL",
-    };
-  return {
+    });
+  return nextActionSchema.parse({
     kind: "HUMAN_GATE_OR_REVIEW",
     projectId: state.id,
     title: "查看当前状态对应的人工 gate 或完成条件",
     explanation: `项目状态为 ${state.status}`,
     classification: "PROPOSAL",
-  };
+  });
 };
 
 const callTool = async (client: IntegrationClient, params: unknown) => {
@@ -1056,15 +1351,23 @@ export type McpBuildIdentity = {
   current(): string;
 };
 
-export const createMcpHandler =
-  (
-    client: IntegrationClient,
-    identity: McpBuildIdentity = {
-      startup: "development",
-      current: () => "development",
-    },
-  ) =>
-  async (request: JsonRpcRequest): Promise<JsonRpcResponse | undefined> => {
+/**
+ * Negotiation is per session, so it lives in the closure rather than in module
+ * state: `tools/list` must describe the revision this session agreed on, not
+ * the newest revision the build happens to support.
+ */
+export const createMcpHandler = (
+  client: IntegrationClient,
+  identity: McpBuildIdentity = {
+    startup: "development",
+    current: () => "development",
+  },
+) => {
+  let negotiatedProtocolVersion = latestProtocolVersion;
+
+  return async (
+    request: JsonRpcRequest,
+  ): Promise<JsonRpcResponse | undefined> => {
     if (request.id === undefined) return undefined;
     const id = request.id;
     try {
@@ -1084,23 +1387,37 @@ export const createMcpHandler =
             },
           },
         };
-      if (request.method === "initialize")
+      if (request.method === "initialize") {
+        negotiatedProtocolVersion = negotiateProtocolVersion(
+          (request.params as { protocolVersion?: unknown } | undefined)
+            ?.protocolVersion,
+        );
         return {
           jsonrpc: "2.0",
           id,
           result: {
-            protocolVersion,
+            protocolVersion: negotiatedProtocolVersion,
             capabilities: { tools: { listChanged: false } },
             serverInfo: {
               name: "dingjiang-mcp",
-              version: "0.6.0",
+              version: serverVersion,
               buildIdentity: identity.startup,
             },
+            instructions: serverInstructions,
           },
         };
+      }
       if (request.method === "ping") return { jsonrpc: "2.0", id, result: {} };
       if (request.method === "tools/list")
-        return { jsonrpc: "2.0", id, result: { tools: toolSurface() } };
+        return {
+          jsonrpc: "2.0",
+          id,
+          result: {
+            tools: toolSurface(
+              structuredToolOutputFor(negotiatedProtocolVersion),
+            ),
+          },
+        };
       if (request.method === "tools/call")
         return {
           jsonrpc: "2.0",
@@ -1124,6 +1441,7 @@ export const createMcpHandler =
       };
     }
   };
+};
 
 export const dingjiangTools = businessTools;
 export const dingjiangCompatibilityTools = compatibilityTools;

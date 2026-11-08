@@ -210,6 +210,91 @@ const runDriftCheck = async () => {
   };
 };
 
+/**
+ * Metadata invariants read from the wire, not from the module.
+ *
+ * `tool-contract.test.ts` already asserts these on the exported arrays; this
+ * run repeats them against the actual JSON-RPC payload, because the surface is
+ * assembled per negotiated revision and a bug in that assembly would be
+ * invisible to a test that never serialises a response.
+ */
+const runMetadataCheck = async () => {
+  // Both surfaces are checked: the business facade is the default, but the
+  // compatibility surface is what most existing hosts still call.
+  const listSurface = async (surface) => {
+    const previous = process.env.DINGJIANG_MCP_TOOL_SURFACE;
+    if (surface) process.env.DINGJIANG_MCP_TOOL_SURFACE = surface;
+    else delete process.env.DINGJIANG_MCP_TOOL_SURFACE;
+    try {
+      const { client } = createClient();
+      const handler = protocol.createMcpHandler(client, identity);
+      const listed = await handler({
+        jsonrpc: "2.0",
+        id: `meta-list-${surface ?? "business"}`,
+        method: "tools/list",
+      });
+      return listed?.result?.tools ?? [];
+    } finally {
+      if (previous === undefined) delete process.env.DINGJIANG_MCP_TOOL_SURFACE;
+      else process.env.DINGJIANG_MCP_TOOL_SURFACE = previous;
+    }
+  };
+
+  const { client } = createClient();
+  const initialized = await protocol
+    .createMcpHandler(
+      client,
+      identity,
+    )({
+      jsonrpc: "2.0",
+      id: "meta-initialize",
+      method: "initialize",
+      params: { protocolVersion: protocol.latestProtocolVersion },
+    })
+    .then((response) => response?.result);
+
+  const tools = [
+    ...new Map(
+      [...(await listSurface()), ...(await listSurface("compatibility"))].map(
+        (tool) => [tool.name, tool],
+      ),
+    ).values(),
+  ];
+  const missingAnnotations = tools
+    .filter(
+      (tool) =>
+        !tool.annotations ||
+        typeof tool.annotations.readOnlyHint !== "boolean" ||
+        typeof tool.annotations.title !== "string",
+    )
+    .map((tool) => tool.name);
+  const mislabelled = tools
+    .filter((tool) => {
+      const required = tool.inputSchema?.required ?? [];
+      const governedWrite =
+        required.includes("requestId") && required.includes("expectedVersion");
+      return governedWrite === Boolean(tool.annotations?.readOnlyHint);
+    })
+    .map((tool) => tool.name);
+  const instructions = initialized?.instructions ?? "";
+  const declaresInvariant = ["PROPOSAL", "requestId", "OWNER"].every((token) =>
+    instructions.includes(token),
+  );
+  const failed =
+    missingAnnotations.length +
+    mislabelled.length +
+    (declaresInvariant ? 0 : 1);
+  return {
+    total: tools.length,
+    failed,
+    withOutputSchema: tools.filter((tool) => tool.outputSchema).length,
+    missingAnnotations,
+    mislabelled,
+    declaresInvariant,
+    pass: tools.length > 0 && failed === 0,
+  };
+};
+
 const run = async () => {
   const results = [];
   for (const testCase of cases)
@@ -220,6 +305,7 @@ const run = async () => {
     });
 
   const drift = await runDriftCheck();
+  const metadata = await runMetadataCheck();
   const group = (kind) => results.filter((item) => item.kind === kind);
   const rate = (items) =>
     items.length === 0
@@ -230,6 +316,7 @@ const run = async () => {
     commit: currentCommit(),
     node: process.version,
     drift,
+    metadata,
     happy: tally(group("happy")),
     guard: tally(group("guard")),
     governance: tally(group("governance")),
@@ -239,6 +326,7 @@ const run = async () => {
   };
   summary.ok =
     drift.pass &&
+    metadata.pass &&
     ["happy", "guard", "governance", "recovery", "protocol"].every(
       (kind) => rate(group(kind)) === 1,
     );
@@ -305,6 +393,23 @@ function renderReport(summary, results) {
         : `未实现：${summary.drift.broken.join(", ")}`,
     ),
     invariant(
+      "工具元数据完备（annotations / outputSchema / instructions）",
+      summary.metadata.total - summary.metadata.failed,
+      summary.metadata.total,
+      [
+        `${summary.metadata.withOutputSchema}/${summary.metadata.total} 声明 outputSchema`,
+        summary.metadata.missingAnnotations.length === 0
+          ? "annotations 全覆盖"
+          : `缺 annotations：${summary.metadata.missingAnnotations.join(", ")}`,
+        summary.metadata.mislabelled.length === 0
+          ? "读/写标注与入参契约一致"
+          : `标错：${summary.metadata.mislabelled.join(", ")}`,
+        summary.metadata.declaresInvariant
+          ? "initialize 携带治理指令"
+          : "initialize 未携带治理指令",
+      ].join("；"),
+    ),
+    invariant(
       "读/写工具 happy path 返回 structuredContent",
       summary.happy.passed,
       summary.happy.total,
@@ -345,6 +450,7 @@ function renderReport(summary, results) {
     "",
     "- 未连接真实 Dingjiang API：所有 Integration 行为为 mock，未验证网络、鉴权、事务与 RLS。",
     "- 未验证 LLM 自然语言到工具选择的准确率：需要外部模型凭据，且结果不可在 CI 中稳定复现。",
+    "- 未对 fixture 做 `outputSchema` 校验：mock client 绕过了 client.ts 中的 Zod 响应校验，因此元数据不变量只断言声明完备与读/写标注一致，不声称 fixture 与 schema 同构。",
     "- 未覆盖 `material.create` / `material.verify` / `evidence.propose` / `evidence.confirm` 的完整写 payload；这些工具由可达性检查与参数守卫覆盖。",
   ].join("\n");
 }

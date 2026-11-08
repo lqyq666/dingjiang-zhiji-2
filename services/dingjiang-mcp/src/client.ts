@@ -127,6 +127,21 @@ const apiToken = (): string => {
   return token;
 };
 
+/**
+ * Exported so the MCP layer can declare the same schema as `outputSchema`
+ * instead of restating the shape by hand. One definition, two consumers.
+ */
+export const integrationEventsSchema = z.object({
+  items: z.array(
+    z.object({
+      projectId: z.string(),
+      sourceTaskId: z.string(),
+      title: z.string(),
+      status: z.string(),
+    }),
+  ),
+});
+
 export class DingjiangIntegrationClient {
   private async request<T>(
     path: string,
@@ -298,19 +313,7 @@ export class DingjiangIntegrationClient {
   }
 
   listEvents() {
-    return this.get(
-      "integration/events",
-      z.object({
-        items: z.array(
-          z.object({
-            projectId: z.string(),
-            sourceTaskId: z.string(),
-            title: z.string(),
-            status: z.string(),
-          }),
-        ),
-      }),
-    );
+    return this.get("integration/events", integrationEventsSchema);
   }
   getExecutionContext(projectId: string) {
     return this.get(

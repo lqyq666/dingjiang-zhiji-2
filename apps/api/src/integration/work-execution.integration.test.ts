@@ -537,7 +537,7 @@ const run = process.env.WORK_EXECUTION_INTEGRATION === "1";
             capabilities: {},
             clientInfo: { name: "isolated-operation-test", version: "1" },
           });
-          expect(initialized.result.serverInfo.version).toBe("0.6.0");
+          expect(initialized.result.serverInfo.version).toBe("0.7.0");
           expect((await rpc("tools/list", {})).result.tools).toHaveLength(13);
           const targetId = "PRJ-SO-202608136";
           const initial = await rpc("tools/call", {
