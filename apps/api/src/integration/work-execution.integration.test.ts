@@ -185,6 +185,48 @@ const run = process.env.WORK_EXECUTION_INTEGRATION === "1";
         ).rejects.toMatchObject({ code: "CONFLICT" });
       }
     });
+    it("executes an in-flight duplicate requestId exactly once", async () => {
+      const task = (await domain.project(projectId)).phases
+        .find((phase) => phase.code === "SOLUTION_APPROVAL")!
+        .tasks.find((item) => item.owner === "PMC" && item.status === "READY")!;
+      const input = await request({
+        action: "progress.record",
+        workItemId: task.id,
+        note: "同一请求编号被并发重发的进展记录",
+        outputReference: "",
+      });
+
+      // A client retried while the first attempt was still in flight, so all
+      // four requests arrive before any receipt exists. Sequential replay is
+      // easy; this is the case that needs the advisory lock. Without it both
+      // attempts pass the receipt lookup and race to insert.
+      const results = await Promise.all(
+        Array.from({ length: 4 }, () =>
+          service.execute(principal, projectId, input),
+        ),
+      );
+
+      expect(
+        results.filter((result) => result.replayed === false),
+      ).toHaveLength(1);
+      expect(results.filter((result) => result.replayed === true)).toHaveLength(
+        3,
+      );
+      // Every caller must be told the same resulting version, not four
+      // different ones.
+      expect(new Set(results.map((result) => result.version)).size).toBe(1);
+
+      const receipts = await pool.query(
+        "SELECT count(*)::int AS count FROM governed_command_receipts WHERE request_id = $1",
+        [input.requestId],
+      );
+      expect(Number(receipts.rows[0]?.count)).toBe(1);
+      const facts = await pool.query(
+        "SELECT count(*)::int AS count FROM vs01_project_subtasks WHERE id = $1 AND progress_note = $2",
+        [task.id, "同一请求编号被并发重发的进展记录"],
+      );
+      expect(Number(facts.rows[0]?.count)).toBe(1);
+    });
     it("rolls back domain changes when the command cannot persist a receipt", async () => {
       const before = await domain.project(projectId);
       const task = before.phases

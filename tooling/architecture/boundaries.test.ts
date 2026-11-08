@@ -196,3 +196,31 @@ describe("architecture boundaries", () => {
     expect(matches).toEqual([]);
   });
 });
+
+/**
+ * Size ratchet for the one file that is already a known problem.
+ *
+ * `apps/api/src/vs01.service.ts` carries six bounded contexts in 94 methods.
+ * Splitting it is a real refactor that needs its own change window; until that
+ * happens, the file must not quietly keep growing. A ratchet says "do not make
+ * it worse", which is a weaker promise than "make it good" but a keepable one.
+ *
+ * If a change genuinely belongs in this file, raising the number is allowed —
+ * in its own commit, with the reason. That is the friction this test exists to
+ * create.
+ */
+describe("growth ratchet", () => {
+  const budget = 5261;
+
+  it("keeps vs01.service.ts from absorbing more responsibilities", async () => {
+    const file = resolve(repositoryRoot, "apps/api/src/vs01.service.ts");
+    const lines = (await readFile(file, "utf8")).split("\n").length - 1;
+    expect(
+      lines,
+      `apps/api/src/vs01.service.ts 已从 ${budget} 行增长到 ${lines} 行。` +
+        `它同时承担任务接入、材料、项目状态机、AI 助手、经验资产与读模型六个上下文，` +
+        `继续变大只会让改动风险线性上升。新逻辑请放进 apps/api/src/<context>/ 下的独立模块；` +
+        `确实必须写在这里时，请在本测试里同步调整预算，并在提交信息里说明理由。`,
+    ).toBeLessThanOrEqual(budget);
+  });
+});

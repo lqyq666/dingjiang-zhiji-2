@@ -24,6 +24,8 @@ supabase                 版本化数据库迁移
 docs                     架构与公开说明
 ```
 
+想先理解系统怎么跑起来的，读 [`docs/architecture/system-overview.md`](docs/architecture/system-overview.md)：分层、一次受治理写入的真实路径、项目五阶段与门、以及当前明确记录的架构债务。
+
 ## 本地启动
 
 要求 Node.js 22.19+、pnpm 11 和 Docker Desktop。

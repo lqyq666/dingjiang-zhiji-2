@@ -252,6 +252,22 @@ describe("VS01 local database seam", () => {
     expect(sql).toContain("UNIQUE (tenant_id, request_id)");
     expect(sql).toContain("FORCE ROW LEVEL SECURITY");
   });
+
+  it("indexes the three hot project reads without touching table shape", async () => {
+    const sql = await readFile(
+      path.resolve(__dirname, "../migrations/0039_project_read_indexes.sql"),
+      "utf8",
+    );
+    expect(sql).toContain(
+      "vs01_project_subtasks (tenant_id, node_id, phase_code)",
+    );
+    expect(sql).toContain("vs01_project_events (tenant_id, project_id, id)");
+    expect(sql).toContain(
+      "vs01_task_materials (tenant_id, task_id, created_at, id)",
+    );
+    // A read-path fix must not turn into a schema change.
+    expect(sql).not.toMatch(/\b(ALTER TABLE|DROP|UPDATE|DELETE)\b/);
+  });
 });
 
 const runVs12Integration = process.env.VS12_INTEGRATION === "1";

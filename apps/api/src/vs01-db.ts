@@ -47,6 +47,7 @@ export const migrations = [
   "0036_production_human_authorization",
   "0037_employee_project_assignments",
   "0038_feishu_employee_notifications",
+  "0039_project_read_indexes",
 ] as const;
 const tenantId = "tenant-demo";
 const sourceDefinitions = [
