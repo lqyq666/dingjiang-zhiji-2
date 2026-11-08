@@ -1,6 +1,7 @@
 # 鼎江智绩 2.0
 
 [![CI](https://github.com/lqyq666/dingjiang-zhiji-2/actions/workflows/ci.yml/badge.svg)](https://github.com/lqyq666/dingjiang-zhiji-2/actions/workflows/ci.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
 鼎江智绩是一套面向单企业内部使用的绩效与咨询项目协作系统。它把项目、阶段、任务、材料、证据、审批和经验沉淀放在同一条可追溯业务链中，并通过服务端授权的 MCP 接口连接 WorkBuddy；飞书用于组织同步和人工协作投影。
 
@@ -138,4 +139,6 @@ MCP 工具面除参数 schema 外还声明 `annotations`（读写、破坏性、
 
 ## 开源状态
 
-仓库公开仅用于源码展示与技术交流；当前未附带开源许可证，除法律默认允许的浏览和 fork 外，不授予额外复制、修改或分发许可。
+本仓库依据 [Apache License 2.0](LICENSE) 开源：允许自由使用、复制、修改、分发与商用（含闭源衍生作品），无需额外授权。分发时需附带许可证原文、保留版权声明、标明改动，并附上 [NOTICE](NOTICE)。选用 Apache-2.0 而不是 MIT，是因为它额外包含明确的专利授权与专利诉讼终止条款——对可能二次开发的人更省事，也和这个项目"每一步都可追溯"的基调一致。
+
+公开的是**可运行的完整实现**：含演示数据与合成夹具，不含任何真实企业数据、客户信息或生产凭据。第三方依赖各自遵循其原有许可证。

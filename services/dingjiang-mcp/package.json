@@ -1,6 +1,7 @@
 {
   "name": "@dingjiang/mcp",
   "version": "0.7.0",
+  "license": "Apache-2.0",
   "private": true,
   "main": "dist/server.js",
   "scripts": {
