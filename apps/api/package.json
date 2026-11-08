@@ -31,6 +31,7 @@
     "db:migrate": "tsx src/vs01-db.ts migrate",
     "db:seed": "tsx src/vs01-db.ts seed",
     "db:reset": "tsx src/vs01-db.ts reset",
+    "maintenance:console": "tsx src/maintenance/human-console.ts",
     "identity:admin": "tsx src/identity/identity-cli.ts",
     "test:production": "node ../../scripts/release/run-production-tests.mjs",
     "test:indexes": "vitest run src/read-path-indexes.integration.test.ts"

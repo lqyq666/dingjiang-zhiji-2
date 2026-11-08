@@ -43,6 +43,14 @@ pnpm dev
 
 默认 Web 地址为 `http://localhost:3000`，API 地址为 `http://127.0.0.1:3001`。`db:reset` 只会重建 schema 并重放迁移与演示种子，只允许用于本地可销毁数据库。它同时是修复"库结构与迁移文件分叉"的手段：启动时若发现 `schema_migrations` 里有仓库中已不存在的迁移，API 会拒绝启动并说明原因。
 
+需要人工介入数据库时（例如补一条受治理命令的回执、核对身份账号），走运维控制台而不是手写 SQL：
+
+```bash
+pnpm --filter @dingjiang/api maintenance:console
+```
+
+它同样走受治理入口，带角色校验与审计，不绕过命令内核。
+
 ## 验证
 
 ```bash
