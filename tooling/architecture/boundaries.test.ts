@@ -200,7 +200,7 @@ describe("architecture boundaries", () => {
 /**
  * Size ratchet for the one file that is already a known problem.
  *
- * `apps/api/src/vs01.service.ts` carries three bounded contexts in 52 methods.
+ * `apps/api/src/vs01.service.ts` carries two bounded contexts in 50 methods.
  * Splitting it is a real refactor that needs its own change window; until that
  * happens, the file must not quietly keep growing. A ratchet says "do not make
  * it worse", which is a weaker promise than "make it good" but a keepable one.
@@ -210,7 +210,7 @@ describe("architecture boundaries", () => {
  * create.
  */
 describe("growth ratchet", () => {
-  const budget = 1779;
+  const budget = 934;
 
   it("keeps vs01.service.ts from absorbing more responsibilities", async () => {
     const file = resolve(repositoryRoot, "apps/api/src/vs01.service.ts");
