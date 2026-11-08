@@ -103,6 +103,20 @@ pnpm bench:read-path
 
 绝对数字会随机器变化，可复现的是"有没有索引"这一组对比。
 
+## 决策记录
+
+关键取舍写在 `docs/adr/`，每篇都能对照代码核对：
+
+| ADR                                                                | 决策                                                         |
+| ------------------------------------------------------------------ | ------------------------------------------------------------ |
+| [0001](docs/adr/0001-repository-foundation.md)                     | 仓库基础：pnpm + Turborepo，运行时入口的增删判据             |
+| [0002](docs/adr/0002-tenant-isolation-in-postgres.md)              | 租户隔离放在 PostgreSQL（全表 FORCE RLS），不只靠应用层      |
+| [0003](docs/adr/0003-idempotency-by-request-id.md)                 | 幂等靠 `requestId` + `pg_advisory_xact_lock`，不是"先查再插" |
+| [0004](docs/adr/0004-layered-integration-suite.md)                 | 测试分五层，tier4/tier5 起真实进程而不是 mock                |
+| [0005](docs/adr/0005-coverage-on-real-postgres.md)                 | 覆盖率在真实 PostgreSQL 上测，不拿单元层的 33% 当数          |
+| [0006](docs/adr/0006-dependency-boundaries-as-tests.md)            | 架构边界用工具守住，空壳模块直接删                           |
+| [0007](docs/adr/0007-performance-needs-a-repeatable-comparison.md) | 性能改动必须附带可复现的前后对比                             |
+
 真实飞书、模型或其他外部服务需要使用者自行创建应用并通过环境变量注入凭据。不要把密钥、真实业务数据、备份或验收日志提交到 Git。
 
 ## 工具契约评测
