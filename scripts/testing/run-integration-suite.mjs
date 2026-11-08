@@ -79,6 +79,7 @@ const switches = {
   EVIDENCE_FIXTURE_INTEGRATION: "1",
   PRODUCTION_INTEGRATION: "1",
   INDEX_AUDIT_INTEGRATION: "1",
+  FEISHU_DELIVERY_INTEGRATION: "1",
 };
 
 const reservedDatabases = {

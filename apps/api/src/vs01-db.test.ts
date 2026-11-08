@@ -268,6 +268,26 @@ describe("VS01 local database seam", () => {
     // A read-path fix must not turn into a schema change.
     expect(sql).not.toMatch(/\b(ALTER TABLE|DROP|UPDATE|DELETE)\b/);
   });
+
+  it("gives the outbound notification queue an ending and a durable backoff", async () => {
+    const sql = await readFile(
+      path.resolve(
+        __dirname,
+        "../migrations/0040_feishu_delivery_reliability.sql",
+      ),
+      "utf8",
+    );
+    // A permanent failure must stop consuming the sweep.
+    expect(sql).toContain("'DEAD'");
+    // Retry-After has to survive a restart, so it lives in the row.
+    expect(sql).toContain("next_attempt_at timestamptz NOT NULL DEFAULT now()");
+    // A dead row without a timestamp is indistinguishable from a bug.
+    expect(sql).toContain("(status = 'DEAD') = (dead_at IS NOT NULL)");
+    // Rows in backoff must not be walked by the claim query.
+    expect(sql).toContain(
+      "WHERE status IN ('PENDING', 'FAILED', 'NOT_CONFIGURED')",
+    );
+  });
 });
 
 const runVs12Integration = process.env.VS12_INTEGRATION === "1";
