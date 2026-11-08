@@ -413,7 +413,9 @@ describe("documented commands exist", () => {
       stated?.[2],
       `README 里的依赖数与实际依赖图不符：实际 ${dependencies} 条依赖`,
     ).toBe(String(dependencies));
-  });
+    // The analyzer walks the whole graph. It takes ~3s locally and longer on
+    // a cold CI runner, so it needs more than vitest's 5s default.
+  }, 30_000);
 
   it("keeps the documented switch count in step with the orchestrator", async () => {
     const suite = await readFile(
