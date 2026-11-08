@@ -248,4 +248,69 @@ describe("documented commands exist", () => {
         mismatched.join("\n"),
     ).toEqual([]);
   });
+
+  it("counts the tables, the migrations and the tools the way the code does", async () => {
+    // Numbers in a document rot silently. A table count is cheap to derive
+    // from the migrations and a tool count from the tool registry, so there
+    // is no reason for a reader to have to trust the prose.
+    const migrationDirectory = join(repositoryRoot, "apps/api/migrations");
+    const migrationFiles = (await readdir(migrationDirectory)).filter((name) =>
+      name.endsWith(".sql"),
+    );
+    const tables = new Set<string>();
+    for (const name of migrationFiles) {
+      const text = await readFile(join(migrationDirectory, name), "utf8");
+      for (const match of text.matchAll(
+        /CREATE TABLE (?:IF NOT EXISTS )?"?([a-z0-9_.]+)"?/gi,
+      ))
+        if (match[1]) tables.add(match[1].toLowerCase());
+    }
+
+    const protocol = await readFile(
+      join(repositoryRoot, "services/dingjiang-mcp/src/protocol.ts"),
+      "utf8",
+    );
+    const tools = (protocol.match(/^ {4}name: "[a-z_.]+"/gm) ?? []).length;
+
+    const expectations: Array<{
+      label: string;
+      actual: number;
+      pattern: RegExp;
+    }> = [
+      {
+        label: "张表",
+        actual: tables.size,
+        pattern: /(\d+)\s*张表/g,
+      },
+      {
+        label: "个迁移",
+        actual: migrationFiles.length,
+        pattern: /迁移\s*(\d+)\s*个/g,
+      },
+      {
+        label: "个工具",
+        actual: tools,
+        pattern: /MCP Server，(\d+)\s*个工具/g,
+      },
+    ];
+
+    const mismatched: string[] = [];
+    for (const file of ["README.md", "docs/architecture/system-overview.md"]) {
+      const text = await readFile(join(repositoryRoot, file), "utf8");
+      for (const expectation of expectations)
+        for (const match of text.matchAll(expectation.pattern)) {
+          const stated = Number(match[1]);
+          if (stated === expectation.actual) continue;
+          mismatched.push(
+            `${file}: 写着「${match[0].trim()}」，代码里是 ${expectation.actual} ${expectation.label}`,
+          );
+        }
+    }
+
+    expect(
+      mismatched,
+      "文档里的数量与代码不一致。请改文档，别改数字了事。\n" +
+        mismatched.join("\n"),
+    ).toEqual([]);
+  });
 });
