@@ -14,17 +14,20 @@
     "feishu:schema:apply": "pnpm --filter @dingjiang/feishu-schema apply",
     "feishu:schema:plan": "pnpm --filter @dingjiang/feishu-schema plan",
     "feishu:schema:verify": "pnpm --filter @dingjiang/feishu-schema verify",
+    "depcruise": "depcruise apps packages services tooling --config .dependency-cruiser.cjs --output-type err",
+    "bench:read-path": "node scripts/bench/project-read-path.mjs",
     "lint": "turbo run lint",
     "test": "turbo run test",
     "test:integration": "node scripts/testing/run-integration-suite.mjs",
     "test:coverage": "node scripts/testing/run-integration-suite.mjs --tier=tier1 --coverage",
     "typecheck": "turbo run typecheck",
-    "verify": "pnpm lint && pnpm typecheck && pnpm test && pnpm build && pnpm --filter @dingjiang/mcp eval && pnpm test:integration && pnpm format:check"
+    "verify": "pnpm depcruise && pnpm lint && pnpm typecheck && pnpm test && pnpm build && pnpm --filter @dingjiang/mcp eval && pnpm test:integration && pnpm format:check"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
     "@types/node": "26.2.0",
     "@vitest/coverage-v8": "^4.1.10",
+    "dependency-cruiser": "^18.7.2",
     "esbuild": "0.28.2",
     "eslint": "10.8.1",
     "prettier": "3.9.6",
