@@ -63,9 +63,12 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      # Only the packages the end-to-end tier actually spawns. Building the
-      # whole workspace here would drag in the Python service for no reason.
+      # Only the packages the end-to-end tier actually spawns.
       - run: pnpm --filter @dingjiang/contracts build
       - run: pnpm --filter @dingjiang/api build
       - run: pnpm --filter @dingjiang/mcp build
       - run: pnpm test:integration
+      # Coverage runs against the real PostgreSQL so it measures the governed
+      # command, material, evidence and workpaper paths, not just the
+      # database-free unit layer. Thresholds live in apps/api/vitest.config.mts.
+      - run: pnpm test:coverage

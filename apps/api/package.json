@@ -8,6 +8,7 @@
     "lint": "eslint --config ../../eslint.config.mjs src",
     "start": "node dist/main.js",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "test:vs05": "vitest run src/vs05.integration.test.ts",
     "test:vs11": "vitest run src/vs11.integration.test.ts",
     "test:vs14": "vitest run src/vs14.integration.test.ts",

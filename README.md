@@ -75,6 +75,14 @@ tier5 补的是最后一个没走真实链路的入口。页面本身是客户�
 
 `pnpm verify` 把上述全部门禁串起来执行，CI 的 `integration` job 与 `verify` job 均设为 `main` 的必需检查。
 
+覆盖率不是挂在无数据库的单元层，而是针对真实 PostgreSQL 测的——那才是受治理命令、材料、证据与工作纸真正被执行的地方：
+
+```bash
+pnpm test:coverage   # tier1 全量 + 27 开关，产出覆盖率并按阈值退出
+```
+
+CI 的 `integration` job 会在 `test:integration` 之后跑它，阈值定义在 `apps/api/vitest.config.mts`（当前约 74% 行、81% 函数、72% 语句、62% 分支）。
+
 真实飞书、模型或其他外部服务需要使用者自行创建应用并通过环境变量注入凭据。不要把密钥、真实业务数据、备份或验收日志提交到 Git。
 
 ## 工具契约评测

@@ -48,6 +48,7 @@ const databaseUrl = process.env.DATABASE_URL ?? DEFAULT_DATABASE_URL;
 const tierFilter = process.argv
   .find((argument) => argument.startsWith("--tier="))
   ?.slice("--tier=".length);
+const coverage = process.argv.includes("--coverage");
 
 /** Every switch the suite honours. Keeping them here is the point. */
 const switches = {
@@ -101,12 +102,21 @@ const listTestFiles = async (directory) => {
 
 const stripAnsi = (text) => text.replace(/\u001b\[[0-9;]*m/g, "");
 
-const runVitest = (label, { files, env, cwd = apiDir }) =>
+const runVitest = (
+  label,
+  { files, env, cwd = apiDir, coverage: withCoverage = false },
+) =>
   new Promise((resolvePromise) => {
     const started = Date.now();
     const child = spawn(
       process.execPath,
-      [vitest, "run", "--no-file-parallelism", ...files],
+      [
+        vitest,
+        "run",
+        "--no-file-parallelism",
+        ...(withCoverage ? ["--coverage"] : []),
+        ...files,
+      ],
       {
         cwd,
         env: { ...process.env, ...switches, ...env },
@@ -232,6 +242,7 @@ const main = async () => {
     {
       name: "tier1 全部 API 测试（含开关）",
       files: sharedFiles,
+      coverage,
       env: {
         DATABASE_URL: databaseUrl,
         VS17_INTEGRATION: "",
