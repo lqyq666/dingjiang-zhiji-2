@@ -1,6 +1,7 @@
 import "reflect-metadata";
 import { randomBytes, randomUUID } from "node:crypto";
-import { Pool } from "pg";
+import type { Pool } from "pg";
+import { createTestPool } from "../testing/test-pool";
 import { NestFactory } from "@nestjs/core";
 import type { INestApplication } from "@nestjs/common";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -37,12 +38,12 @@ const run = process.env.PRODUCTION_INTEGRATION === "1";
     beforeAll(async () => {
       const url = new URL(databaseUrl());
       url.pathname = "/postgres";
-      admin = new Pool({ connectionString: url.toString() });
+      admin = createTestPool(url.toString());
       // Names are generated internally with digits/underscores only.
       await admin.query(`CREATE DATABASE ${database}`);
       createdDatabase = true;
       url.pathname = `/${database}`;
-      ownerPool = new Pool({ connectionString: url.toString() });
+      ownerPool = createTestPool(url.toString());
       await Promise.all([migrate(ownerPool), migrate(ownerPool)]);
       const credential = randomBytes(32).toString("hex");
       await admin.query(
@@ -81,8 +82,7 @@ const run = process.env.PRODUCTION_INTEGRATION === "1";
       vi.stubEnv("DINGJIANG_COMPANY_NAME", "生产验收企业");
       vi.stubEnv("DINGJIANG_TARGET_OTD", "85");
       vi.stubEnv("DINGJIANG_MCP_API_TOKEN", "");
-      runtimePool = new Pool({
-        connectionString: url.toString(),
+      runtimePool = createTestPool(url.toString(), {
         options: `-c app.tenant_id=${tenant}`,
       });
       identity = new IdentityService(runtimePool);

@@ -1,4 +1,5 @@
-import { Pool } from "pg";
+import type { Pool } from "pg";
+import { createTestPool } from "../testing/test-pool";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { GovernedCommandKernel } from "../command-kernel/governed-command-kernel";
@@ -27,12 +28,12 @@ integrationDescribe("evidence intake runtime acceptance fixture", () => {
   beforeAll(async () => {
     const adminUrl = new URL(databaseUrl());
     adminUrl.pathname = "/postgres";
-    admin = new Pool({ connectionString: adminUrl.toString() });
+    admin = createTestPool(adminUrl.toString());
     await admin.query(`CREATE DATABASE ${databaseName}`);
     const testUrl = new URL(databaseUrl());
     testUrl.pathname = `/${databaseName}`;
     process.env.DATABASE_URL = testUrl.toString();
-    pool = new Pool({ connectionString: testUrl.toString() });
+    pool = createTestPool(testUrl.toString());
     await migrate(pool);
     await resetAndSeed(pool);
     business = new Vs01Service();

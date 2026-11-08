@@ -4,7 +4,8 @@ import {
   integrationMaterialListSchema,
   integrationSuccessEnvelopeSchema,
 } from "@dingjiang/contracts";
-import { Pool } from "pg";
+import type { Pool } from "pg";
+import { createTestPool } from "../testing/test-pool";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { AppModule } from "../app.module";
@@ -36,12 +37,12 @@ integrationDescribe("material.create acceptance fixture HTTP read seam", () => {
   beforeAll(async () => {
     const adminUrl = new URL(databaseUrl());
     adminUrl.pathname = "/postgres";
-    admin = new Pool({ connectionString: adminUrl.toString() });
+    admin = createTestPool(adminUrl.toString());
     await admin.query(`CREATE DATABASE ${databaseName}`);
     const testUrl = new URL(databaseUrl());
     testUrl.pathname = `/${databaseName}`;
     process.env.DATABASE_URL = testUrl.toString();
-    pool = new Pool({ connectionString: testUrl.toString() });
+    pool = createTestPool(testUrl.toString());
     await migrate(pool);
     await resetAndSeed(pool);
     business = new Vs01Service();

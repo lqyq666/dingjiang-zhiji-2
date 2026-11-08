@@ -1,4 +1,5 @@
-import { Pool } from "pg";
+import type { Pool } from "pg";
+import { createTestPool } from "../testing/test-pool";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { databaseUrl, migrate } from "../vs01-db";
@@ -96,11 +97,11 @@ runDescribe("Feishu delivery queue against PostgreSQL", () => {
   beforeAll(async () => {
     const base = new URL(databaseUrl());
     base.pathname = "/postgres";
-    admin = new Pool({ connectionString: base.toString() });
+    admin = createTestPool(base.toString());
     await admin.query(`CREATE DATABASE ${database}`);
     base.pathname = `/${database}`;
     process.env.DATABASE_URL = base.toString();
-    pool = new Pool({ connectionString: base.toString() });
+    pool = createTestPool(base.toString());
     await migrate(pool);
 
     await pool.query(

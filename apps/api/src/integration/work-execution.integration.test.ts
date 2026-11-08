@@ -6,7 +6,8 @@ import "reflect-metadata";
 import { NestFactory } from "@nestjs/core";
 import { AppModule } from "../app.module";
 import { randomUUID } from "node:crypto";
-import { Pool } from "pg";
+import type { Pool } from "pg";
+import { createTestPool } from "../testing/test-pool";
 import { beforeAll, afterAll, describe, expect, it, vi } from "vitest";
 import type {
   IntegrationPrincipal,
@@ -91,11 +92,11 @@ const run = process.env.WORK_EXECUTION_INTEGRATION === "1";
     beforeAll(async () => {
       const base = new URL(databaseUrl());
       base.pathname = "/postgres";
-      admin = new Pool({ connectionString: base.toString() });
+      admin = createTestPool(base.toString());
       await admin.query(`CREATE DATABASE ${name}`);
       base.pathname = `/${name}`;
       process.env.DATABASE_URL = base.toString();
-      pool = new Pool({ connectionString: base.toString() });
+      pool = createTestPool(base.toString());
       await migrate(pool);
       await resetAndSeed(pool);
       papers = new RootCauseWorkpaperService();
