@@ -2,7 +2,8 @@ import { createInterface } from "node:readline";
 import { readFileSync } from "node:fs";
 
 import { DingjiangIntegrationClient } from "./client";
-import { createMcpHandler, type JsonRpcRequest } from "./protocol";
+import { createMcpHandler, type JsonRpcResponse } from "./protocol";
+import { createStdioDispatcher } from "./stdio";
 
 const identityFile = process.env.DINGJIANG_MCP_BUILD_IDENTITY_FILE?.trim();
 const readIdentity = (): string => {
@@ -20,26 +21,20 @@ const handler = createMcpHandler(new DingjiangIntegrationClient(), {
 });
 const input = createInterface({ input: process.stdin, crlfDelay: Infinity });
 
-const respond = (payload: unknown): void => {
-  process.stdout.write(`${JSON.stringify(payload)}\n`);
+const respond = async (payload: JsonRpcResponse): Promise<void> => {
+  if (!process.stdout.write(`${JSON.stringify(payload)}\n`)) {
+    await new Promise<void>((resolve) => {
+      process.stdout.once("drain", resolve);
+    });
+  }
 };
 
-input.on("line", (line) => {
-  const trimmed = line.trim();
-  if (!trimmed) return;
-  void (async () => {
-    let request: JsonRpcRequest;
-    try {
-      request = JSON.parse(trimmed) as JsonRpcRequest;
-    } catch {
-      respond({
-        jsonrpc: "2.0",
-        id: null,
-        error: { code: -32700, message: "Parse error" },
-      });
-      return;
-    }
-    const response = await handler(request);
-    if (response) respond(response);
-  })();
+const dispatch = createStdioDispatcher(handler, respond, {
+  onError: (error) => {
+    process.stderr.write(
+      `dingjiang-mcp handler failure: ${error instanceof Error ? error.message : String(error)}\n`,
+    );
+  },
 });
+
+input.on("line", dispatch);

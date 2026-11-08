@@ -1,0 +1,169 @@
+import { describe, expect, it, vi } from "vitest";
+
+import type { JsonRpcRequest, JsonRpcResponse } from "./protocol";
+import {
+  createStdioDispatcher,
+  DEFAULT_MAX_LINE_BYTES,
+  resolveMaxLineBytes,
+} from "./stdio";
+
+const line = (id: number | string, method = "ping"): string =>
+  JSON.stringify({ jsonrpc: "2.0", id, method });
+
+const success = (id: JsonRpcResponse["id"]): JsonRpcResponse => ({
+  jsonrpc: "2.0",
+  id,
+  result: {},
+});
+
+const setup = (
+  handler: (request: JsonRpcRequest) => Promise<JsonRpcResponse | undefined>,
+  options: { maxLineBytes?: number; onError?: (error: unknown) => void } = {},
+) => {
+  const responses: JsonRpcResponse[] = [];
+  const dispatch = createStdioDispatcher(
+    handler,
+    (payload) => {
+      responses.push(payload);
+    },
+    options,
+  );
+  return { dispatch, responses };
+};
+
+describe("dingjiang-mcp stdio dispatcher", () => {
+  it("keeps response order even when later requests finish first", async () => {
+    const delays = new Map<number, number>([
+      [1, 30],
+      [2, 0],
+      [3, 10],
+    ]);
+    const { dispatch, responses } = setup(async (request) => {
+      const id = Number(request.id);
+      await new Promise((resolve) => setTimeout(resolve, delays.get(id) ?? 0));
+      return success(request.id ?? null);
+    });
+
+    dispatch(line(1));
+    dispatch(line(2));
+    dispatch(line(3));
+    await dispatch.drain();
+
+    expect(responses.map((response) => response.id)).toEqual([1, 2, 3]);
+  });
+
+  it("never runs two governed calls concurrently", async () => {
+    let active = 0;
+    let peak = 0;
+    const { dispatch } = setup(async (request) => {
+      active += 1;
+      peak = Math.max(peak, active);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      active -= 1;
+      return success(request.id ?? null);
+    });
+
+    for (let id = 1; id <= 6; id += 1) dispatch(line(id, "tools/call"));
+    await dispatch.drain();
+
+    expect(peak).toBe(1);
+  });
+
+  it("converts a thrown handler into -32603 and keeps serving later lines", async () => {
+    const onError = vi.fn();
+    const { dispatch, responses } = setup(
+      async (request) => {
+        if (request.id === 1) throw new Error("boom");
+        return success(request.id ?? null);
+      },
+      { onError },
+    );
+
+    dispatch(line(1));
+    dispatch(line(2));
+    await dispatch.drain();
+
+    expect(onError).toHaveBeenCalledOnce();
+    expect(responses).toHaveLength(2);
+    expect(responses[0]).toMatchObject({
+      id: 1,
+      error: { code: -32603, data: { code: "HANDLER_FAILURE" } },
+    });
+    expect(responses[1]).toMatchObject({ id: 2, result: {} });
+    expect(JSON.stringify(responses[0])).not.toContain("boom");
+  });
+
+  it("answers parse errors with -32700 without calling the handler", async () => {
+    const handler = vi.fn(async (request: JsonRpcRequest) =>
+      success(request.id ?? null),
+    );
+    const { dispatch, responses } = setup(handler);
+
+    dispatch("{not-json");
+    dispatch(line(2));
+    await dispatch.drain();
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(responses[0]).toMatchObject({
+      id: null,
+      error: { code: -32700, message: "Parse error" },
+    });
+    expect(responses[1]).toMatchObject({ id: 2, result: {} });
+  });
+
+  it("ignores blank lines and notifications without a response", async () => {
+    const { dispatch, responses } = setup(async () => undefined);
+
+    dispatch("   ");
+    dispatch("");
+    dispatch(JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }));
+    await dispatch.drain();
+
+    expect(responses).toHaveLength(0);
+  });
+
+  it("rejects oversized lines before parsing and before reaching the handler", async () => {
+    const handler = vi.fn();
+    const { dispatch, responses } = setup(handler, { maxLineBytes: 64 });
+
+    dispatch(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping", params: { pad: "x".repeat(200) } }));
+    await dispatch.drain();
+
+    expect(handler).not.toHaveBeenCalled();
+    expect(responses[0]).toMatchObject({
+      id: null,
+      error: { code: -32600, data: { code: "REQUEST_TOO_LARGE", maxLineBytes: 64 } },
+    });
+  });
+
+  it("waits for asynchronous responders so backpressure cannot reorder writes", async () => {
+    const written: number[] = [];
+    const dispatch = createStdioDispatcher(
+      async (request) => success(request.id ?? null),
+      async (payload) => {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        written.push(Number(payload.id));
+      },
+    );
+
+    dispatch(line(1));
+    dispatch(line(2));
+    await dispatch.drain();
+
+    expect(written).toEqual([1, 2]);
+  });
+});
+
+describe("resolveMaxLineBytes", () => {
+  it("falls back to the default for missing or invalid values", () => {
+    expect(resolveMaxLineBytes(undefined)).toBe(DEFAULT_MAX_LINE_BYTES);
+    expect(resolveMaxLineBytes("")).toBe(DEFAULT_MAX_LINE_BYTES);
+    expect(resolveMaxLineBytes("abc")).toBe(DEFAULT_MAX_LINE_BYTES);
+    expect(resolveMaxLineBytes("-10")).toBe(DEFAULT_MAX_LINE_BYTES);
+  });
+
+  it("accepts explicit values and caps absurd configuration", () => {
+    expect(resolveMaxLineBytes("4096")).toBe(4096);
+    expect(resolveMaxLineBytes("999999999999")).toBe(67_108_864);
+  });
+});

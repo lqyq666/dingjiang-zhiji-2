@@ -43,10 +43,82 @@ export class IntegrationClientError extends Error {
   }
 }
 
-const integrationBaseUrl = (): URL =>
-  validateIntegrationBaseUrl(
-    process.env.DINGJIANG_API_BASE_URL?.trim() || "http://127.0.0.1:3001/api",
+export type IntegrationTransportCode =
+  | "INTEGRATION_TIMEOUT"
+  | "INTEGRATION_NETWORK_ERROR"
+  | "INTEGRATION_INVALID_RESPONSE";
+
+/**
+ * Transport-level failure, distinct from a server-returned business failure and
+ * from caller input validation. Keeping these separate matters: a ZodError
+ * raised while validating the *response* used to surface as INVALID_REQUEST,
+ * which blamed the caller for a server/contract mismatch.
+ */
+export class IntegrationTransportError extends Error {
+  constructor(
+    readonly code: IntegrationTransportCode,
+    message: string,
+    options?: { cause?: unknown },
+  ) {
+    super(message, options);
+    this.name = "IntegrationTransportError";
+  }
+}
+
+export const DEFAULT_TIMEOUT_MS = 10_000;
+
+export const resolveTimeoutMs = (
+  value: string | undefined = process.env.DINGJIANG_MCP_TIMEOUT_MS,
+): number => {
+  if (!value) return DEFAULT_TIMEOUT_MS;
+  const parsed = Number.parseInt(value.trim(), 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_TIMEOUT_MS;
+  return Math.min(Math.max(parsed, 100), 120_000);
+};
+
+const classifyFetchError = (error: unknown): IntegrationTransportError => {
+  if (error instanceof IntegrationTransportError) return error;
+  const name = error instanceof Error ? error.name : "";
+  if (name === "TimeoutError" || name === "AbortError")
+    return new IntegrationTransportError(
+      "INTEGRATION_TIMEOUT",
+      "Integration API 请求超时；不得改 requestId 重试，必须复用原请求核对服务端状态",
+      { cause: error },
+    );
+  return new IntegrationTransportError(
+    "INTEGRATION_NETWORK_ERROR",
+    "无法连接 Integration API；请确认本地服务已启动且 DINGJIANG_API_BASE_URL 配置正确",
+    { cause: error },
   );
+};
+
+const readJsonPayload = async (response: Response): Promise<unknown> => {
+  const text = await response.text().catch((error: unknown) => {
+    throw classifyFetchError(error);
+  });
+  if (!text.trim()) return null;
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    throw new IntegrationTransportError(
+      "INTEGRATION_INVALID_RESPONSE",
+      `Integration API 未返回 JSON 响应（HTTP ${response.status}）`,
+    );
+  }
+};
+
+// Validating a URL on every call was repeated work on the hot path. The cache is
+// keyed by the raw environment value, so tests and rotations that change
+// DINGJIANG_API_BASE_URL still trigger a fresh validation.
+let cachedBaseUrl: { raw: string; url: URL } | undefined;
+const integrationBaseUrl = (): URL => {
+  const raw =
+    process.env.DINGJIANG_API_BASE_URL?.trim() || "http://127.0.0.1:3001/api";
+  if (cachedBaseUrl?.raw === raw) return cachedBaseUrl.url;
+  const url = validateIntegrationBaseUrl(raw);
+  cachedBaseUrl = { raw, url };
+  return url;
+};
 
 const apiToken = (): string => {
   const token = process.env.DINGJIANG_MCP_API_TOKEN?.trim();
@@ -56,52 +128,70 @@ const apiToken = (): string => {
 };
 
 export class DingjiangIntegrationClient {
-  private async get<T>(path: string, dataSchema: z.ZodType<T>): Promise<T> {
+  private async request<T>(
+    path: string,
+    dataSchema: z.ZodType<T>,
+    options: { method: "GET" | "POST"; body?: unknown; correlationId?: string },
+  ): Promise<T> {
     const url = new URL(path.replace(/^\//, ""), integrationBaseUrl());
+    // Configuration errors must keep their own message instead of being
+    // reclassified as network failures.
+    const token = apiToken();
     const response = await fetch(url, {
       redirect: "error",
+      ...(options.method === "POST" ? { method: "POST" } : {}),
       headers: {
         accept: "application/json",
-        authorization: `Bearer ${apiToken()}`,
-        "x-correlation-id": randomUUID(),
+        authorization: `Bearer ${token}`,
+        "x-correlation-id": options.correlationId ?? randomUUID(),
+        ...(options.body === undefined
+          ? {}
+          : { "content-type": "application/json" }),
       },
-      signal: AbortSignal.timeout(10_000),
+      ...(options.body === undefined
+        ? {}
+        : { body: JSON.stringify(options.body) }),
+      signal: AbortSignal.timeout(resolveTimeoutMs()),
+    }).catch((error: unknown) => {
+      throw classifyFetchError(error);
     });
-    const payload: unknown = await response.json().catch(() => null);
+    const payload = await readJsonPayload(response);
     if (!response.ok) {
       const failure = integrationFailureEnvelopeSchema.safeParse(payload);
       if (failure.success) throw new IntegrationClientError(failure.data);
-      throw new Error(`Integration API 请求失败（HTTP ${response.status}）`);
+      throw new IntegrationTransportError(
+        "INTEGRATION_INVALID_RESPONSE",
+        `Integration API 请求失败（HTTP ${response.status}），且未返回标准 failure envelope`,
+      );
     }
-    return integrationSuccessEnvelopeSchema(dataSchema).parse(payload).data;
+    try {
+      return integrationSuccessEnvelopeSchema(dataSchema).parse(payload).data;
+    } catch (error) {
+      if (error instanceof z.ZodError)
+        throw new IntegrationTransportError(
+          "INTEGRATION_INVALID_RESPONSE",
+          "Integration API 响应与 contract 不一致；请检查服务端与 MCP 的版本是否匹配",
+          { cause: error },
+        );
+      throw error;
+    }
   }
 
-  private async post<T>(
+  private get<T>(path: string, dataSchema: z.ZodType<T>): Promise<T> {
+    return this.request(path, dataSchema, { method: "GET" });
+  }
+
+  private post<T>(
     path: string,
     body: unknown,
     dataSchema: z.ZodType<T>,
     correlationId: string,
   ): Promise<T> {
-    const url = new URL(path.replace(/^\//, ""), integrationBaseUrl());
-    const response = await fetch(url, {
-      redirect: "error",
+    return this.request(path, dataSchema, {
       method: "POST",
-      headers: {
-        accept: "application/json",
-        authorization: `Bearer ${apiToken()}`,
-        "content-type": "application/json",
-        "x-correlation-id": correlationId,
-      },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(10_000),
+      body,
+      correlationId,
     });
-    const payload: unknown = await response.json().catch(() => null);
-    if (!response.ok) {
-      const failure = integrationFailureEnvelopeSchema.safeParse(payload);
-      if (failure.success) throw new IntegrationClientError(failure.data);
-      throw new Error(`Integration API 请求失败（HTTP ${response.status}）`);
-    }
-    return integrationSuccessEnvelopeSchema(dataSchema).parse(payload).data;
   }
 
   getProjectContext(projectId: string) {

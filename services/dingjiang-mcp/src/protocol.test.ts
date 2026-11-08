@@ -6,6 +6,7 @@ import {
   dingjiangTools,
   type IntegrationClient,
 } from "./protocol";
+import { IntegrationTransportError } from "./client";
 
 const client = (): IntegrationClient => ({
   listEvents: vi.fn().mockResolvedValue({ items: [] }),
@@ -579,4 +580,37 @@ describe("dingjiang-mcp protocol", () => {
       expect(integration.getProjectContext).not.toHaveBeenCalled();
     },
   );
+});
+
+describe("dingjiang-mcp transport error surface", () => {
+  it("classifies transport failures separately from caller input errors", async () => {
+    const integration = client();
+    integration.getProjectState = vi.fn().mockRejectedValue(
+      new IntegrationTransportError(
+        "INTEGRATION_TIMEOUT",
+        "Integration API 请求超时；不得改 requestId 重试",
+      ),
+    );
+    const response = await createMcpHandler(integration)({
+      jsonrpc: "2.0",
+      id: "transport-timeout",
+      method: "tools/call",
+      params: { name: "get_project_state", arguments: { projectId: "PRJ-1" } },
+    });
+    expect(response).toMatchObject({ result: { isError: true } });
+    const result = (
+      response as { result?: { content?: Array<{ text?: string }> } }
+    ).result;
+    const payload = JSON.parse(
+      result?.content?.[0]?.text ?? "{}",
+    ) as Record<string, unknown>;
+    expect(payload).toMatchObject({
+      code: "INTEGRATION_TIMEOUT",
+      retryable: false,
+      requiresHuman: true,
+    });
+    const text = JSON.stringify(response);
+    expect(text).not.toContain("TOOL_UNAVAILABLE");
+    expect(text).not.toContain("INVALID_REQUEST");
+  });
 });

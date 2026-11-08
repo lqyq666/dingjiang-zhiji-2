@@ -27,6 +27,23 @@ WorkBuddy 5.3.14 的本机实测行为是不展开 MCP `env` 中的 `${VAR}`，�
 
 飞书 App Secret 的平台轮换是独立外部操作。上述本地脚本只清理 WorkBuddy 历史痕迹，不会重置开放平台凭据、修改飞书 Schema 或发送飞书消息。
 
+## 传输层与客户端健壮性
+
+stdio 入口由 `src/stdio.ts` 统一调度，`server.ts` 只负责进程与流接线：
+
+- 请求串行处理：受治理写入口不会并发执行，响应顺序与请求顺序一致；`dispatch.drain()` 可等待已接收行全部应答。
+- 异常兜底：handler 抛出的异常转换为 `-32603`，诊断写 stderr，不进入 stdout 协议流，也不中断后续请求。
+- 单行上限：默认 1 MiB，可用 `DINGJIANG_MCP_MAX_LINE_BYTES` 调整（上限 64 MiB）；超限返回 `-32600` 与 `REQUEST_TOO_LARGE`，在解析前拒绝。
+- 背压：stdout 写满时等待 `drain`，避免大批量响应乱序。
+
+Integration client 将失败分为三类，避免把服务端问题误报为调用方参数错误：
+
+- 服务端返回的标准 failure envelope → `IntegrationClientError`，保留服务端 code 与 correlationId。
+- 传输层失败 → `IntegrationTransportError`：`INTEGRATION_TIMEOUT`、`INTEGRATION_NETWORK_ERROR`、`INTEGRATION_INVALID_RESPONSE`（非 JSON 响应、HTTP 失败且无标准 envelope、响应与 contract 不一致）。
+- 入参校验失败 → `INVALID_REQUEST`，只对应调用方参数；响应 schema 校验失败不再归入此类。
+
+`DINGJIANG_MCP_TIMEOUT_MS` 配置请求超时（默认 10000，范围 100–120000）。超时错误仍要求复用原 requestId / correlationId 核对，不得改 requestId 重试。`DINGJIANG_API_BASE_URL` 的校验结果按原始值缓存，环境变量变化时立即重新校验；loopback HTTP 覆盖完整 `127.0.0.0/8`，并拒绝 `127.0.0.1.evil.com` 这类伪装主机。
+
 ## 工具边界
 
 默认读取：`workspace.resume`、`workspace.events`、`work.context`、`work.operations`、`evidence.bundle`、`experience.search`、`project.next_action`。

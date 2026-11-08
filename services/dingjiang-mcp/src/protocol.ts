@@ -13,7 +13,7 @@ import {
   evidenceProposeRequestSchema,
 } from "@dingjiang/contracts";
 
-import { IntegrationClientError } from "./client";
+import { IntegrationClientError, IntegrationTransportError } from "./client";
 import type { DingjiangIntegrationClient } from "./client";
 
 const protocolVersion = "2025-06-18";
@@ -686,6 +686,16 @@ const safeToolError = (error: unknown) => {
       retryable: error.failure.error.retryable,
       requiresHuman: error.failure.error.requiresHuman,
       correlationId: error.failure.correlationId,
+    };
+  if (error instanceof IntegrationTransportError)
+    return {
+      code: error.code,
+      message: error.message,
+      // Governed writes must be reconciled with the original requestId rather
+      // than blindly retried, and a degraded transport needs a human to restore
+      // the local service before any retry is meaningful.
+      retryable: false,
+      requiresHuman: true,
     };
   if (error instanceof z.ZodError)
     return {
