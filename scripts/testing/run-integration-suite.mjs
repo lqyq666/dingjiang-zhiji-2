@@ -14,6 +14,7 @@
  *   tier 2  VS17 against its own database
  *   tier 3  VS18 against its own database
  *   tier 4  real end-to-end: MCP process → HTTP → API process → PostgreSQL
+ *   tier 5  real web data layer → HTTP → API process → PostgreSQL
  *
  * Any failure fails the run. Nothing here needs a model credential, a Feishu
  * app or network access beyond loopback.
@@ -21,6 +22,7 @@
  * Usage:
  *   node scripts/testing/run-integration-suite.mjs
  *   node scripts/testing/run-integration-suite.mjs --tier=e2e
+ *   node scripts/testing/run-integration-suite.mjs --tier=web
  *   DATABASE_URL=postgres://... node scripts/testing/run-integration-suite.mjs
  */
 import { spawn } from "node:child_process";
@@ -33,6 +35,7 @@ import { fileURLToPath } from "node:url";
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "../..");
 const apiDir = join(root, "apps/api");
+const webDir = join(root, "apps/web");
 const vitest = join(root, "node_modules/vitest/vitest.mjs");
 // `pg` is a dependency of the API package, not of the repository root, so it
 // has to be resolved from there.
@@ -80,6 +83,7 @@ const switches = {
 const reservedDatabases = {
   vs17: "dingjiang_vs17_test",
   vs18: "dingjiang_vs18_test",
+  web: "dingjiang_web_e2e",
 };
 
 const listTestFiles = async (directory) => {
@@ -95,14 +99,14 @@ const listTestFiles = async (directory) => {
 
 const stripAnsi = (text) => text.replace(/\u001b\[[0-9;]*m/g, "");
 
-const runVitest = (label, { files, env }) =>
+const runVitest = (label, { files, env, cwd = apiDir }) =>
   new Promise((resolvePromise) => {
     const started = Date.now();
     const child = spawn(
       process.execPath,
       [vitest, "run", "--no-file-parallelism", ...files],
       {
-        cwd: apiDir,
+        cwd,
         env: { ...process.env, ...switches, ...env },
         stdio: ["ignore", "pipe", "pipe"],
       },
@@ -157,9 +161,15 @@ const withDatabase = (name) => {
 };
 
 const main = async () => {
-  // tier4 runs the packaged entrypoints, so a missing build is a setup error,
-  // not a test failure. Say so instead of failing inside the spawn.
-  if (!tierFilter || tierFilter === "tier4" || tierFilter === "e2e") {
+  // tier4 and tier5 spawn the packaged entrypoints, so a missing build is a
+  // setup error, not a test failure. Say so instead of failing inside the spawn.
+  if (
+    !tierFilter ||
+    tierFilter === "tier4" ||
+    tierFilter === "tier5" ||
+    tierFilter === "e2e" ||
+    tierFilter === "web"
+  ) {
     const entries = [
       join(apiDir, "dist/main.js"),
       join(root, "services/dingjiang-mcp/dist/server.js"),
@@ -210,6 +220,7 @@ const main = async () => {
     join(apiDir, "src/vs18.integration.test.ts"),
     join(apiDir, "src/vs18-http.integration.test.ts"),
   ];
+  const webFiles = [join(webDir, "src/api-live.integration.test.ts")];
 
   const notes = [];
   for (const name of Object.values(reservedDatabases))
@@ -219,7 +230,12 @@ const main = async () => {
     {
       name: "tier1 全部 API 测试（含开关）",
       files: sharedFiles,
-      env: { DATABASE_URL: databaseUrl, VS17_INTEGRATION: "", REAL_E2E: "" },
+      env: {
+        DATABASE_URL: databaseUrl,
+        VS17_INTEGRATION: "",
+        REAL_E2E: "",
+        WEB_E2E: "",
+      },
     },
     {
       name: "tier2 VS17 专用库",
@@ -244,16 +260,28 @@ const main = async () => {
       files: e2eFiles,
       env: { DATABASE_URL: databaseUrl, REAL_E2E: "1" },
     },
+    {
+      name: "tier5 真实前端数据层（Web → HTTP → API 进程 → PostgreSQL）",
+      files: webFiles,
+      cwd: webDir,
+      env: {
+        DATABASE_URL: withDatabase(reservedDatabases.web),
+        WEB_E2E: "1",
+      },
+    },
   ].filter((tier) => {
     if (!tierFilter) return true;
     if (tierFilter === "e2e") return tier.name.startsWith("tier4");
+    if (tierFilter === "web") return tier.name.startsWith("tier5");
     return tier.name.startsWith(tierFilter);
   });
 
   console.log("# 全量集成测试\n");
   for (const note of notes) console.log(`- 数据库：${note}`);
   console.log(`- 共享库：${databaseUrl.replace(/:[^:@/]+@/, ":***@")}`);
-  console.log(`- 用例文件：${allFiles.length} 个\n`);
+  console.log(
+    `- 用例文件：API ${allFiles.length} 个 / Web ${webFiles.length} 个\n`,
+  );
 
   const results = [];
   for (const tier of tiers) {

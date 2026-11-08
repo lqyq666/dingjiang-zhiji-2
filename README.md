@@ -56,16 +56,21 @@ docker compose up -d postgres
 pnpm test:integration
 ```
 
-它按四个层级组织，任一失败即非零退出：
+它按五个层级组织，任一失败即非零退出：
 
-| 层级  | 内容                                                                               |
-| ----- | ---------------------------------------------------------------------------------- |
-| tier1 | 全部 API 测试文件，27 个开关全开，串行跑共享库（串行是因为这些用例会重置同一个库） |
-| tier2 | VS17 集成与 HTTP，独立库 `dingjiang_vs17_test`                                     |
-| tier3 | VS18 集成与 HTTP，独立库 `dingjiang_vs18_test`                                     |
-| tier4 | 真实端到端：MCP 进程 → 真实 HTTP → API 进程 → PostgreSQL                           |
+| 层级  | 内容                                                                                       |
+| ----- | ------------------------------------------------------------------------------------------ |
+| tier1 | 全部 API 测试文件，27 个开关全开，串行跑共享库（串行是因为这些用例会重置同一个库）         |
+| tier2 | VS17 集成与 HTTP，独立库 `dingjiang_vs17_test`                                             |
+| tier3 | VS18 集成与 HTTP，独立库 `dingjiang_vs18_test`                                             |
+| tier4 | 真实端到端：MCP 进程 → 真实 HTTP → API 进程 → PostgreSQL                                   |
+| tier5 | 真实前端数据层：Web 数据层 → 真实 HTTP → API 进程 → PostgreSQL，独立库 `dingjiang_web_e2e` |
 
-tier4 不 mock 任何一层：独立进程启动 `apps/api/dist/main.js` 与 `services/dingjiang-mcp/dist/server.js`，用 bearer token 走真实鉴权，验证 `initialize`/`tools/list` 元数据、越权写被拒、受治理写成功、同 `requestId` 重放返回原回执、旧 `expectedVersion` 被拒，最后回查数据库确认只落一条事实与一条回执。`pnpm verify` 把上述全部门禁串起来执行。
+tier4 不 mock 任何一层：独立进程启动 `apps/api/dist/main.js` 与 `services/dingjiang-mcp/dist/server.js`，用 bearer token 走真实鉴权，验证 `initialize`/`tools/list` 元数据、越权写被拒、受治理写成功、同 `requestId` 重放返回原回执、旧 `expectedVersion` 被拒，最后回查数据库确认只落一条事实与一条回执。
+
+tier5 补的是最后一个没走真实链路的入口。页面本身是客户端渲染，抓 HTML 证明力很低；真正会让界面出问题的是 Web 数据层与 API 之间的契约漂移，而 `apps/web/src/app/lib/vs01-api.ts` 是普通 TypeScript，可以直接驱动。测试因此不重写、不 mock，直接把 `NEXT_PUBLIC_API_BASE_URL` 指向真实 API 进程，再调用已发布的数据层函数，让函数内部的 Zod 解析判定契约是否还成立；写入走 `updateProjectSubtask` 后，用独立请求回读确认落库。库里的演示项目也由测试自己走「重置 → 确认工单 → 立项」建立，不依赖外部预置数据。
+
+`pnpm verify` 把上述全部门禁串起来执行，CI 的 `integration` job 与 `verify` job 均设为 `main` 的必需检查。
 
 真实飞书、模型或其他外部服务需要使用者自行创建应用并通过环境变量注入凭据。不要把密钥、真实业务数据、备份或验收日志提交到 Git。
 
