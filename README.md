@@ -103,6 +103,10 @@ pnpm bench:read-path
 
 绝对数字会随机器变化，可复现的是"有没有索引"这一组对比。
 
+## 接口面文档
+
+`docs/api-surface.md` 列出全部 85 个 HTTP 路由，按控制器分组。它由 `pnpm docs:api-surface` 从控制器源码用 TypeScript 解析器生成，不是手写的，所以不会漏。`tooling/architecture/api-surface.test.ts` 每次测试都会核对文档与代码：新增路由忘了重新生成文档，CI 会红并指出是哪一条。
+
 ## 决策记录
 
 关键取舍写在 `docs/adr/`，每篇都能对照代码核对：
