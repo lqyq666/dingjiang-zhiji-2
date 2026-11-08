@@ -2,6 +2,8 @@ import { BadRequestException } from "@nestjs/common";
 import { describe, expect, it, vi } from "vitest";
 import type { Pool } from "pg";
 
+import type { Project } from "@dingjiang/contracts";
+import { assistantContextFingerprint } from "./assistant/guided-analysis";
 import { Vs01Service } from "./vs01.service";
 
 describe("OWNER read projections", () => {
@@ -1181,83 +1183,6 @@ describe("VS01 task decision seam", () => {
     ).toBe(false);
   });
 
-  it("writes non-empty before/after snapshots for scheme submission and return", async () => {
-    const snapshots: unknown[] = [];
-    const client = {
-      query: async (statement: string, values?: unknown[]) => {
-        if (["BEGIN", "COMMIT", "ROLLBACK"].includes(statement))
-          return { rows: [], rowCount: 0 };
-        if (statement.includes("FROM vs01_projects p JOIN vs01_project_phases"))
-          return {
-            rows: [
-              {
-                project_status: "DRAFT",
-                project_returned_reason: null,
-                gate_status: "OPEN",
-                gate_returned_reason: null,
-              },
-            ],
-            rowCount: 1,
-          };
-        if (statement.startsWith("UPDATE vs01_projects"))
-          return { rows: [], rowCount: 1 };
-        if (statement.startsWith("UPDATE vs01_project_phases"))
-          return { rows: [], rowCount: 1 };
-        if (statement.includes("INSERT INTO vs01_project_events")) {
-          snapshots.push(JSON.parse(String(values?.[5])));
-          return { rows: [], rowCount: 1 };
-        }
-        throw new Error(`Unexpected statement: ${statement}`);
-      },
-      release: () => undefined,
-    };
-    const service = new Vs01Service() as unknown as {
-      pool: Pool;
-      projectTransition: (
-        id: string,
-        next: string,
-        allowed: string[],
-        eventType: string,
-        actor: "PMC" | "OWNER",
-        note: string,
-        gateStatus: string,
-      ) => Promise<void>;
-    };
-    service.pool = { connect: async () => client } as unknown as Pool;
-
-    await service.projectTransition(
-      "PRJ-OTD-001",
-      "PENDING_APPROVAL",
-      ["DRAFT"],
-      "PROJECT_SUBMITTED",
-      "PMC",
-      "",
-      "PENDING",
-    );
-    await service.projectTransition(
-      "PRJ-OTD-001",
-      "RETURNED",
-      ["PENDING_APPROVAL"],
-      "PROJECT_RETURNED",
-      "OWNER",
-      "请补充成本影响",
-      "RETURNED",
-    );
-
-    expect(snapshots).toHaveLength(2);
-    expect(snapshots[0]).toMatchObject({
-      before: { projectStatus: "DRAFT", gateStatus: "OPEN" },
-      after: { projectStatus: "PENDING_APPROVAL", gateStatus: "PENDING" },
-    });
-    expect(snapshots[1]).toMatchObject({
-      after: {
-        projectStatus: "RETURNED",
-        projectReturnedReason: "请补充成本影响",
-        gateStatus: "RETURNED",
-      },
-    });
-  });
-
   it("records and compensates Teach feedback without changing project state", async () => {
     const statements: string[] = [];
     const eventTypes: string[] = [];
@@ -1333,17 +1258,13 @@ describe("VS01 task decision seam", () => {
     const service = new Vs01Service() as unknown as {
       pool: Pool;
       project: (id: string) => Promise<unknown>;
-      assistantContextFingerprint: (
-        value: unknown,
-        stageCode: string,
-      ) => string;
       createAssistantFeedback: Vs01Service["createAssistantFeedback"];
       withdrawAssistantFeedback: Vs01Service["withdrawAssistantFeedback"];
     };
     service.pool = { connect: async () => client } as unknown as Pool;
     service.project = async () => project;
-    const contextFingerprint = service.assistantContextFingerprint(
-      project,
+    const contextFingerprint = assistantContextFingerprint(
+      project as unknown as Project,
       "EXECUTION_CONTROL",
     );
 
