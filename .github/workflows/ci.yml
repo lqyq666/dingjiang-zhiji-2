@@ -37,3 +37,38 @@ jobs:
       - run: pnpm --filter @dingjiang/mcp eval
       - run: pnpm format:check
       - run: docker compose config
+
+  # The verify job runs every test that does not need infrastructure, which
+  # means the ~90 database-backed cases stay skipped. This job gives them a
+  # real PostgreSQL so the governed-command, material, evidence, workpaper and
+  # end-to-end paths are actually executed on every push.
+  integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_DB: dingjiang
+          POSTGRES_USER: dingjiang
+          POSTGRES_PASSWORD: local-only-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U dingjiang -d dingjiang"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgres://dingjiang:local-only-password@127.0.0.1:5432/dingjiang
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: pnpm/action-setup@v6.0.10
+        with:
+          version: 11.19.0
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: pnpm test:integration

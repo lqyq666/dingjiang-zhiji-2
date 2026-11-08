@@ -44,10 +44,28 @@ pnpm dev
 ```bash
 pnpm lint
 pnpm typecheck
-pnpm test
+pnpm test          # 不需要数据库：单元测试 + 默认关闭的集成用例
 pnpm build
 docker compose config --quiet
 ```
+
+需要真实数据库的验证另有一条命令。仓库里约 90 个用例挂在 `*_INTEGRATION=1` 开关后面，其中三个还会拒绝在共享库上运行（它们会重置数据，要求专用库），过去只能靠口头约定逐个跑：
+
+```bash
+docker compose up -d postgres
+pnpm test:integration
+```
+
+它按四个层级组织，任一失败即非零退出：
+
+| 层级  | 内容                                                                               |
+| ----- | ---------------------------------------------------------------------------------- |
+| tier1 | 全部 API 测试文件，27 个开关全开，串行跑共享库（串行是因为这些用例会重置同一个库） |
+| tier2 | VS17 集成与 HTTP，独立库 `dingjiang_vs17_test`                                     |
+| tier3 | VS18 集成与 HTTP，独立库 `dingjiang_vs18_test`                                     |
+| tier4 | 真实端到端：MCP 进程 → 真实 HTTP → API 进程 → PostgreSQL                           |
+
+tier4 不 mock 任何一层：独立进程启动 `apps/api/dist/main.js` 与 `services/dingjiang-mcp/dist/server.js`，用 bearer token 走真实鉴权，验证 `initialize`/`tools/list` 元数据、越权写被拒、受治理写成功、同 `requestId` 重放返回原回执、旧 `expectedVersion` 被拒，最后回查数据库确认只落一条事实与一条回执。`pnpm verify` 把上述全部门禁串起来执行。
 
 真实飞书、模型或其他外部服务需要使用者自行创建应用并通过环境变量注入凭据。不要把密钥、真实业务数据、备份或验收日志提交到 Git。
 
