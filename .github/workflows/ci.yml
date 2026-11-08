@@ -70,5 +70,9 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm build
+      # Only the packages the end-to-end tier actually spawns. Building the
+      # whole workspace here would drag in the Python service for no reason.
+      - run: pnpm --filter @dingjiang/contracts build
+      - run: pnpm --filter @dingjiang/api build
+      - run: pnpm --filter @dingjiang/mcp build
       - run: pnpm test:integration
