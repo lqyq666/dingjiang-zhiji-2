@@ -47,10 +47,16 @@ const invoke = async (tool: string) => {
     method: "tools/call",
     params: { name: tool, arguments: {} },
   });
-  const text =
+  // An unknown tool is now a protocol error (-32602), so the marker lives in
+  // error.data.code rather than in a tool result's text.
+  const error = (
+    response as { error?: { code?: number; data?: { code?: string } } }
+  ).error;
+  if (error) return error.data?.code ?? `ERROR_${error.code}`;
+  return (
     (response as { result?: { content?: Array<{ text?: string }> } }).result
-      ?.content?.[0]?.text ?? "";
-  return text;
+      ?.content?.[0]?.text ?? ""
+  );
 };
 
 /**

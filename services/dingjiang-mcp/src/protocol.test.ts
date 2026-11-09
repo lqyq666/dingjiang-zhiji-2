@@ -271,20 +271,55 @@ describe("dingjiang-mcp protocol", () => {
     expect(result.structuredContent?.code).toBe("TOOL_UNAVAILABLE");
   });
 
-  it("returns a structured code when the tool is unknown", async () => {
+  it("rejects an unknown tool as a protocol parameter error", async () => {
     const response = await createMcpHandler(client())({
       jsonrpc: "2.0",
       id: "unknown-tool",
       method: "tools/call",
       params: { name: "nope.nope", arguments: {} },
     });
-    const result = (
-      response as {
-        result: { isError: boolean; structuredContent?: { code?: string } };
-      }
-    ).result;
-    expect(result.isError).toBe(true);
-    expect(result.structuredContent?.code).toBe("UNKNOWN_TOOL");
+    // -32602, not a tool result: a client must be able to tell "no such tool"
+    // from "the tool ran and failed".
+    expect(response).toMatchObject({
+      error: {
+        code: -32602,
+        data: { code: "UNKNOWN_TOOL", tool: "nope.nope" },
+      },
+    });
+  });
+
+  it.each([
+    ["a non-object payload", null],
+    ["an array payload", []],
+    ["a wrong jsonrpc version", { jsonrpc: "1.0", id: 1, method: "ping" }],
+    ["a non-string method", { jsonrpc: "2.0", id: 1, method: 42 }],
+  ])("rejects %s as a protocol error", async (_label, payload) => {
+    const response = await createMcpHandler(client())(payload as never);
+    expect(response).toMatchObject({ error: { code: -32600 } });
+  });
+
+  it("rejects a non-scalar request id without echoing it", async () => {
+    const response = await createMcpHandler(client())({
+      jsonrpc: "2.0",
+      id: { nested: true } as never,
+      method: "ping",
+    });
+    expect(response).toMatchObject({
+      id: null,
+      error: { code: -32600, data: { code: "INVALID_ID" } },
+    });
+  });
+
+  it("rejects array params as invalid params", async () => {
+    const response = await createMcpHandler(client())({
+      jsonrpc: "2.0",
+      id: 7,
+      method: "initialize",
+      params: [] as never,
+    });
+    expect(response).toMatchObject({
+      error: { code: -32602, data: { code: "INVALID_PARAMS" } },
+    });
   });
 
   it("keeps the first handshake when a client initializes twice", async () => {
@@ -623,7 +658,9 @@ describe("dingjiang-mcp protocol", () => {
       params: { name: "run_sql", arguments: { sql: "select 1" } },
     });
     expect(scoped).toMatchObject({ result: { isError: true } });
-    expect(unknown).toMatchObject({ result: { isError: true } });
+    expect(unknown).toMatchObject({
+      error: { code: -32602, data: { code: "UNKNOWN_TOOL" } },
+    });
     expect(integration.getProjectContext).not.toHaveBeenCalled();
   });
 

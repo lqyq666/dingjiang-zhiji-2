@@ -1027,6 +1027,27 @@ const errorResult = (payload: {
   isError: true,
 });
 
+/**
+ * A JSON-RPC level failure, distinct from a tool result.
+ *
+ * The specification separates "your request was malformed" (-32600), "the
+ * method or its parameters are wrong" (-32601 / -32602) and "the handler
+ * broke" (-32603) from "the tool ran and reported a business failure", which
+ * belongs in the result with `isError: true`. Collapsing the two makes a client
+ * retry a request that can never succeed.
+ */
+const protocolError = (
+  id: string | number | null,
+  code: number,
+  message: string,
+  dataCode: string,
+  extra: Record<string, unknown> = {},
+) => ({
+  jsonrpc: "2.0" as const,
+  id,
+  error: { code, message, data: { code: dataCode, ...extra } },
+});
+
 const loadWorkContext = async (
   client: IntegrationClient,
   projectId: string,
@@ -1411,8 +1432,36 @@ export const createMcpHandler = (
   return async (
     request: JsonRpcRequest,
   ): Promise<JsonRpcResponse | undefined> => {
-    if (request.id === undefined) return undefined;
-    const id = request.id;
+    // Validate the JSON-RPC envelope before the dispatcher sees it. A payload
+    // that is not an object, carries a non-scalar id, omits the version, or
+    // has a non-string method is a protocol error, not a tool failure.
+    const envelope = request as unknown;
+    if (
+      envelope === null ||
+      typeof envelope !== "object" ||
+      Array.isArray(envelope)
+    )
+      return protocolError(null, -32600, "Invalid Request", "INVALID_ENVELOPE");
+
+    const rawId = (request as { id?: unknown }).id;
+    if (rawId === undefined) return undefined; // notification: no response
+    if (
+      rawId !== null &&
+      typeof rawId !== "string" &&
+      typeof rawId !== "number"
+    )
+      return protocolError(null, -32600, "Invalid Request", "INVALID_ID");
+    const id = rawId as string | number | null;
+    if (request.jsonrpc !== "2.0" || typeof request.method !== "string")
+      return protocolError(id, -32600, "Invalid Request", "INVALID_ENVELOPE");
+    if (
+      request.params !== undefined &&
+      (request.params === null ||
+        typeof request.params !== "object" ||
+        Array.isArray(request.params))
+    )
+      return protocolError(id, -32602, "Invalid params", "INVALID_PARAMS");
+
     try {
       const deployedBuildIdentity = identity.current();
       if (deployedBuildIdentity !== identity.startup)
@@ -1460,12 +1509,22 @@ export const createMcpHandler = (
           id,
           result: { tools: toolSurface(sessionProfile) },
         };
-      if (request.method === "tools/call")
+      if (request.method === "tools/call") {
+        // An unknown tool name is a parameter error, not a tool result: the
+        // specification puts it under -32602 so a client can tell "you called
+        // something that does not exist" from "the tool ran and failed".
+        const toolName = (request.params as { name?: unknown } | undefined)
+          ?.name;
+        if (typeof toolName !== "string" || !dispatchedToolNames.has(toolName))
+          return protocolError(id, -32602, "Invalid params", "UNKNOWN_TOOL", {
+            tool: typeof toolName === "string" ? toolName : null,
+          });
         return {
           jsonrpc: "2.0",
           id,
           result: await callTool(client, request.params),
         };
+      }
       return {
         jsonrpc: "2.0",
         id,

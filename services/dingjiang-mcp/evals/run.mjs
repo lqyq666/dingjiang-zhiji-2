@@ -83,6 +83,20 @@ const invokeTool = async (handler, name, args) => {
     method: "tools/call",
     params: { name, arguments: args ?? {} },
   });
+  // A JSON-RPC level failure carries its own error object; surface it as the
+  // payload so drift checks can still see the code.
+  const protocolFailure = response?.error;
+  if (protocolFailure) {
+    const payload = protocolFailure.data ?? {
+      code: `PROTOCOL_${protocolFailure.code}`,
+    };
+    return {
+      isError: true,
+      structured: payload,
+      payload,
+      text: JSON.stringify(payload),
+    };
+  }
   const result = response?.result;
   const text = result?.content?.[0]?.text ?? "";
   let payload;
