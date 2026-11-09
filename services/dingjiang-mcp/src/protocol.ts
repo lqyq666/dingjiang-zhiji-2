@@ -1187,204 +1187,222 @@ const loadEvidenceBundle = async (
 // GET /api/integration/projects/:id/next-action, and a second front end gets
 // the same answer instead of a copy of the rule.
 
+/**
+ * One handler per tool, grouped by domain.
+ *
+ * This replaces a 202-line switch whose cases all did the same three things:
+ * parse the input, call the client, wrap the result. Grouping by domain keeps
+ * the surface readable, and a missing tool becomes a missing key a test can
+ * look for instead of a fall-through nobody exercises.
+ */
+type ToolHandler = (
+  client: IntegrationClient,
+  input: unknown,
+) => Promise<unknown>;
+
+const workHandlers: Record<string, ToolHandler> = {
+  "workspace.events": async (client, input) => {
+    emptyInput.parse(input);
+    return client.listEvents();
+  },
+  "work.operations": async (client, input) => {
+    const body = identifierInput.parse(input);
+    return client.getExecutionContext(body.projectId);
+  },
+  "work.execute": async (client, input) => {
+    const { projectId, ...request } = workExecuteInput.parse(input);
+    return client.executeWork(
+      projectId,
+      workExecutionRequestSchema.parse(request),
+    );
+  },
+  "workspace.resume": async (client, input) => {
+    emptyInput.parse(input);
+    const [projects, currentProject, currentWorkItem] = await Promise.all([
+      client.listProjects(),
+      client.getCurrentProject(),
+      client.getCurrentWorkItem(),
+    ]);
+    const projectId = currentProject.id;
+    if (currentWorkItem.projectId !== projectId)
+      throw new ToolRefusal(
+        "CONTEXT_DRIFT",
+        "当前项目与当前事项不一致，请刷新后重试",
+        true,
+      );
+    const [work, bundle, nextAction] = await Promise.all([
+      loadWorkContext(client, projectId, currentWorkItem),
+      loadEvidenceBundle(client, projectId),
+      client.getNextAction(projectId),
+    ]);
+    return assertCompositeShape(
+      { projects, ...work, ...bundle, currentWorkItem, nextAction },
+      Object.keys(workspaceResumeOutput.shape),
+    );
+  },
+  "work.context": async (client, input) => {
+    const body = identifierInput.parse(input);
+    return assertCompositeShape(
+      await loadWorkContext(client, body.projectId),
+      Object.keys(workContextOutput.shape),
+    );
+  },
+  "project.next_action": async (client, input) => {
+    const body = identifierInput.parse(input);
+    return client.getNextAction(body.projectId);
+  },
+};
+
+const evidenceHandlers: Record<string, ToolHandler> = {
+  "evidence.bundle": async (client, input) => {
+    const body = identifierInput.parse(input);
+    return assertCompositeShape(
+      await loadEvidenceBundle(client, body.projectId),
+      Object.keys(evidenceBundleOutput.shape),
+    );
+  },
+  "material.verify": async (client, input) => {
+    const { projectId, ...request } = materialVerifyInput.parse(input);
+    return client.verifyMaterial(
+      projectId,
+      materialVerificationRequestSchema.parse(request),
+    );
+  },
+  "evidence.confirm": async (client, input) => {
+    const { projectId, ...request } = evidenceConfirmInput.parse(input);
+    return client.confirmEvidence(
+      projectId,
+      evidenceConfirmationRequestSchema.parse(request),
+    );
+  },
+  "workpaper.propose": async (client, input) => {
+    const { projectId, ...request } = workpaperProposeInput.parse(input);
+    return client.proposeWorkpaper(
+      projectId,
+      workpaperProposeRequestSchema.parse(request),
+    );
+  },
+  "material.create": async (client, input) => {
+    const { projectId, ...request } = materialCreateInput.parse(input);
+    return client.createMaterial(
+      projectId,
+      materialCreateRequestSchema.parse(request),
+    );
+  },
+  "evidence.propose": async (client, input) => {
+    const { projectId, ...request } = evidenceProposeInput.parse(input);
+    return client.proposeEvidence(
+      projectId,
+      evidenceProposeRequestSchema.parse(request),
+    );
+  },
+};
+
+const experienceHandlers: Record<string, ToolHandler> = {
+  "experience.search": async (client, input) => {
+    const body = searchInput.parse(input);
+    return client.searchFormalExperiences(body.query);
+  },
+  search_formal_experiences: async (client, input) => {
+    const body = searchInput.parse(input);
+    return client.searchFormalExperiences(body.query);
+  },
+  get_formal_experience: async (client, input) => {
+    const body = experienceInput.parse(input);
+    return client.getFormalExperience(body.experienceId);
+  },
+  get_experience_evidence: async (client, input) => {
+    const body = experienceInput.parse(input);
+    return client.getExperienceEvidence(body.experienceId);
+  },
+};
+
+const readHandlers: Record<string, ToolHandler> = {
+  list_projects: async (client, input) => {
+    emptyInput.parse(input);
+    return client.listProjects();
+  },
+  get_current_project: async (client, input) => {
+    emptyInput.parse(input);
+    return client.getCurrentProject();
+  },
+  get_project_context: async (client, input) => {
+    const body = identifierInput.parse(input);
+    return client.getProjectContext(body.projectId);
+  },
+  get_project_state: async (client, input) => {
+    const body = identifierInput.parse(input);
+    return client.getProjectState(body.projectId);
+  },
+  get_current_work_item: async (client, input) => {
+    emptyInput.parse(input);
+    return client.getCurrentWorkItem();
+  },
+  list_project_work_items: async (client, input) => {
+    const body = identifierInput.parse(input);
+    return client.listProjectWorkItems(body.projectId);
+  },
+  list_evidence: async (client, input) => {
+    const body = identifierInput.parse(input);
+    return client.listEvidence(body.projectId);
+  },
+  list_traceable_materials: async (client, input) => {
+    const body = identifierInput.parse(input);
+    return client.listTraceableMaterials(body.projectId);
+  },
+  get_material_preview: async (client, input) => {
+    const body = materialInput.parse(input);
+    return client.getMaterialPreview(body.projectId, body.materialId);
+  },
+  get_evidence: async (client, input) => {
+    const body = evidenceInput.parse(input);
+    return client.getEvidence(body.projectId, body.evidenceId);
+  },
+  get_source_version: async (client, input) => {
+    const body = sourceVersionInput.parse(input);
+    return client.getSourceVersion(body.projectId, body.sourceVersionId);
+  },
+  get_validation_workpaper: async (client, input) => {
+    const body = identifierInput.parse(input);
+    return client.getValidationWorkpaper(body.projectId);
+  },
+};
+
+/**
+ * The implementation side of the tool surface. Exported so a test can compare
+ * it with the declared set: a handler without a declaration, or the reverse, is
+ * a drift the switch used to hide behind its default branch.
+ */
+const toolHandlers: Record<string, ToolHandler> = {
+  ...workHandlers,
+  ...evidenceHandlers,
+  ...experienceHandlers,
+  ...readHandlers,
+};
+
+export const registeredToolNames: ReadonlySet<string> = new Set(
+  Object.keys(toolHandlers),
+);
+
 const callTool = async (client: IntegrationClient, params: unknown) => {
   const parsed = z
     .object({ name: z.string(), arguments: z.unknown().optional() })
     .passthrough()
     .parse(params);
-  const input = parsed.arguments ?? {};
+  // hasOwn rather than a lookup: a name such as __proto__ must not resolve to
+  // something inherited from Object.prototype.
+  const handler = Object.hasOwn(toolHandlers, parsed.name)
+    ? toolHandlers[parsed.name]
+    : undefined;
+  if (!handler)
+    return errorResult({
+      code: "UNKNOWN_TOOL",
+      message: "未公开该 MCP 工具",
+      retryable: false,
+      requiresHuman: false,
+    });
   try {
-    switch (parsed.name) {
-      case "workspace.events": {
-        emptyInput.parse(input);
-        return toolResult(await client.listEvents());
-      }
-      case "work.operations": {
-        const body = identifierInput.parse(input);
-        return toolResult(await client.getExecutionContext(body.projectId));
-      }
-      case "work.execute": {
-        const { projectId, ...request } = workExecuteInput.parse(input);
-        return toolResult(
-          await client.executeWork(
-            projectId,
-            workExecutionRequestSchema.parse(request),
-          ),
-        );
-      }
-      case "material.verify": {
-        const { projectId, ...request } = materialVerifyInput.parse(input);
-        return toolResult(
-          await client.verifyMaterial(
-            projectId,
-            materialVerificationRequestSchema.parse(request),
-          ),
-        );
-      }
-      case "evidence.confirm": {
-        const { projectId, ...request } = evidenceConfirmInput.parse(input);
-        return toolResult(
-          await client.confirmEvidence(
-            projectId,
-            evidenceConfirmationRequestSchema.parse(request),
-          ),
-        );
-      }
-      case "workspace.resume": {
-        emptyInput.parse(input);
-        const [projects, currentProject, currentWorkItem] = await Promise.all([
-          client.listProjects(),
-          client.getCurrentProject(),
-          client.getCurrentWorkItem(),
-        ]);
-        const projectId = currentProject.id;
-        if (currentWorkItem.projectId !== projectId)
-          throw new ToolRefusal(
-            "CONTEXT_DRIFT",
-            "当前项目与当前事项不一致，请刷新后重试",
-            true,
-          );
-        const [work, bundle, nextAction] = await Promise.all([
-          loadWorkContext(client, projectId, currentWorkItem),
-          loadEvidenceBundle(client, projectId),
-          client.getNextAction(projectId),
-        ]);
-        return toolResult(
-          assertCompositeShape(
-            { projects, ...work, ...bundle, currentWorkItem, nextAction },
-            Object.keys(workspaceResumeOutput.shape),
-          ),
-        );
-      }
-      case "work.context": {
-        const body = identifierInput.parse(input);
-        return toolResult(
-          assertCompositeShape(
-            await loadWorkContext(client, body.projectId),
-            Object.keys(workContextOutput.shape),
-          ),
-        );
-      }
-      case "evidence.bundle": {
-        const body = identifierInput.parse(input);
-        return toolResult(
-          assertCompositeShape(
-            await loadEvidenceBundle(client, body.projectId),
-            Object.keys(evidenceBundleOutput.shape),
-          ),
-        );
-      }
-      case "experience.search": {
-        const body = searchInput.parse(input);
-        return toolResult(await client.searchFormalExperiences(body.query));
-      }
-      case "project.next_action": {
-        const body = identifierInput.parse(input);
-        return toolResult(await client.getNextAction(body.projectId));
-      }
-      case "list_projects": {
-        emptyInput.parse(input);
-        return toolResult(await client.listProjects());
-      }
-      case "get_current_project": {
-        emptyInput.parse(input);
-        return toolResult(await client.getCurrentProject());
-      }
-      case "get_project_context": {
-        const body = identifierInput.parse(input);
-        return toolResult(await client.getProjectContext(body.projectId));
-      }
-      case "get_project_state": {
-        const body = identifierInput.parse(input);
-        return toolResult(await client.getProjectState(body.projectId));
-      }
-      case "get_current_work_item": {
-        emptyInput.parse(input);
-        return toolResult(await client.getCurrentWorkItem());
-      }
-      case "list_project_work_items": {
-        const body = identifierInput.parse(input);
-        return toolResult(await client.listProjectWorkItems(body.projectId));
-      }
-      case "list_evidence": {
-        const body = identifierInput.parse(input);
-        return toolResult(await client.listEvidence(body.projectId));
-      }
-      case "list_traceable_materials": {
-        const body = identifierInput.parse(input);
-        return toolResult(await client.listTraceableMaterials(body.projectId));
-      }
-      case "get_material_preview": {
-        const body = materialInput.parse(input);
-        return toolResult(
-          await client.getMaterialPreview(body.projectId, body.materialId),
-        );
-      }
-      case "get_evidence": {
-        const body = evidenceInput.parse(input);
-        return toolResult(
-          await client.getEvidence(body.projectId, body.evidenceId),
-        );
-      }
-      case "get_source_version": {
-        const body = sourceVersionInput.parse(input);
-        return toolResult(
-          await client.getSourceVersion(body.projectId, body.sourceVersionId),
-        );
-      }
-      case "get_validation_workpaper": {
-        const body = identifierInput.parse(input);
-        return toolResult(await client.getValidationWorkpaper(body.projectId));
-      }
-      case "search_formal_experiences": {
-        const body = searchInput.parse(input);
-        return toolResult(await client.searchFormalExperiences(body.query));
-      }
-      case "get_formal_experience": {
-        const body = experienceInput.parse(input);
-        return toolResult(await client.getFormalExperience(body.experienceId));
-      }
-      case "get_experience_evidence": {
-        const body = experienceInput.parse(input);
-        return toolResult(
-          await client.getExperienceEvidence(body.experienceId),
-        );
-      }
-      case "workpaper.propose": {
-        const { projectId, ...request } = workpaperProposeInput.parse(input);
-        return toolResult(
-          await client.proposeWorkpaper(
-            projectId,
-            workpaperProposeRequestSchema.parse(request),
-          ),
-        );
-      }
-      case "material.create": {
-        const { projectId, ...request } = materialCreateInput.parse(input);
-        return toolResult(
-          await client.createMaterial(
-            projectId,
-            materialCreateRequestSchema.parse(request),
-          ),
-        );
-      }
-      case "evidence.propose": {
-        const { projectId, ...request } = evidenceProposeInput.parse(input);
-        return toolResult(
-          await client.proposeEvidence(
-            projectId,
-            evidenceProposeRequestSchema.parse(request),
-          ),
-        );
-      }
-      default:
-        return errorResult({
-          code: "UNKNOWN_TOOL",
-          message: "未公开该 MCP 工具",
-          retryable: false,
-          requiresHuman: false,
-        });
-    }
+    return toolResult(await handler(client, parsed.arguments ?? {}));
   } catch (error) {
     return errorResult(safeToolError(error));
   }

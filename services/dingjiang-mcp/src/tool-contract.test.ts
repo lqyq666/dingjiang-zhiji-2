@@ -7,6 +7,7 @@ import {
   dispatchedToolNames,
   latestProtocolVersion,
   outputContractToolCount,
+  registeredToolNames,
   serverVersion,
   type IntegrationClient,
   type ToolDescriptor,
@@ -78,6 +79,13 @@ const declaresGovernedWriteEnvelope = (tool: ToolDescriptor): boolean => {
 describe("MCP tool contract drift guard", () => {
   it("declares and implements exactly the same tool names", () => {
     expect([...dispatchedToolNames].sort()).toEqual(declaredToolNames);
+  });
+
+  it("keeps the handler registry and the declared surface identical", () => {
+    // Both directions: a handler nobody declares is unreachable code, and a
+    // declared tool without a handler is a call that can only fail. The switch
+    // this replaced could only express the second half, through `default`.
+    expect([...registeredToolNames].sort()).toEqual(declaredToolNames);
   });
 
   it("keeps every declared tool reachable through the dispatcher", async () => {
