@@ -120,7 +120,16 @@ const runVitest = (
       ],
       {
         cwd,
-        env: { ...process.env, ...switches, ...env },
+        env: {
+          ...process.env,
+          ...switches,
+          ...env,
+          // The suite drives one credential from many files in a single minute,
+          // which is not the behaviour the ceiling is meant to police. The 429
+          // path is covered by rate-limit.service.test.ts; production keeps the
+          // limit on by default.
+          DINGJIANG_RATE_LIMIT_ENABLED: "0",
+        },
         stdio: ["ignore", "pipe", "pipe"],
       },
     );

@@ -23,6 +23,34 @@ export const resolveMaxLineBytes = (
   return Math.min(parsed, ABSOLUTE_MAX_LINE_BYTES);
 };
 
+/**
+ * How many lines may wait for the serial queue. The queue exists so governed
+ * writes never overlap; it must not become unbounded memory when a handler is
+ * slow. 64 is well above any real Agent's in-flight count.
+ */
+export const DEFAULT_MAX_PENDING_REQUESTS = 64;
+const ABSOLUTE_MAX_PENDING_REQUESTS = 1_024;
+
+export const resolveMaxPendingRequests = (
+  value: string | undefined = process.env.DINGJIANG_MCP_MAX_PENDING_REQUESTS,
+): number => {
+  if (!value) return DEFAULT_MAX_PENDING_REQUESTS;
+  const parsed = Number.parseInt(value.trim(), 10);
+  if (!Number.isFinite(parsed) || parsed <= 0)
+    return DEFAULT_MAX_PENDING_REQUESTS;
+  return Math.min(parsed, ABSOLUTE_MAX_PENDING_REQUESTS);
+};
+
+/** Best effort: an overflowing line still deserves its own request id back. */
+const idOfLine = (line: string): string | number | null => {
+  try {
+    const id = (JSON.parse(line) as { id?: unknown } | null)?.id;
+    return typeof id === "string" || typeof id === "number" ? id : null;
+  } catch {
+    return null;
+  }
+};
+
 const errorResponse = (
   id: JsonRpcResponse["id"],
   code: number,
@@ -52,11 +80,18 @@ const errorResponse = (
 export const createStdioDispatcher = (
   handler: StdioHandler,
   respond: StdioResponder,
-  options: { maxLineBytes?: number; onError?: (error: unknown) => void } = {},
+  options: {
+    maxLineBytes?: number;
+    maxPendingRequests?: number;
+    onError?: (error: unknown) => void;
+  } = {},
 ): StdioDispatcher => {
   const maxLineBytes = options.maxLineBytes ?? resolveMaxLineBytes();
+  const maxPendingRequests =
+    options.maxPendingRequests ?? resolveMaxPendingRequests();
   const onError = options.onError ?? (() => undefined);
   let queue: Promise<void> = Promise.resolve();
+  let pending = 0;
 
   const execute = async (line: string): Promise<void> => {
     const trimmed = line.trim();
@@ -91,11 +126,25 @@ export const createStdioDispatcher = (
   };
 
   const dispatch = ((line: string): void => {
+    if (pending >= maxPendingRequests) {
+      // Refuse instead of queueing. An unbounded queue turns a slow handler into
+      // unbounded memory, and the caller would wait the same amount of time for
+      // a reply it can already predict.
+      void respond(
+        errorResponse(idOfLine(line), -32000, "Server busy", {
+          code: "QUEUE_OVERFLOW",
+          maxPendingRequests,
+        }),
+      );
+      return;
+    }
+    pending += 1;
+    const run = () =>
+      execute(line).finally(() => {
+        pending -= 1;
+      });
     // A failed line must not poison the queue for the rest of the session.
-    queue = queue.then(
-      () => execute(line),
-      () => execute(line),
-    );
+    queue = queue.then(run, run);
   }) as StdioDispatcher;
   dispatch.drain = () => queue;
   return dispatch;

@@ -4,7 +4,9 @@ import type { JsonRpcRequest, JsonRpcResponse } from "./protocol";
 import {
   createStdioDispatcher,
   DEFAULT_MAX_LINE_BYTES,
+  DEFAULT_MAX_PENDING_REQUESTS,
   resolveMaxLineBytes,
+  resolveMaxPendingRequests,
 } from "./stdio";
 
 const line = (id: number | string, method = "ping"): string =>
@@ -18,7 +20,11 @@ const success = (id: JsonRpcResponse["id"]): JsonRpcResponse => ({
 
 const setup = (
   handler: (request: JsonRpcRequest) => Promise<JsonRpcResponse | undefined>,
-  options: { maxLineBytes?: number; onError?: (error: unknown) => void } = {},
+  options: {
+    maxLineBytes?: number;
+    maxPendingRequests?: number;
+    onError?: (error: unknown) => void;
+  } = {},
 ) => {
   const responses: JsonRpcResponse[] = [];
   const dispatch = createStdioDispatcher(
@@ -32,6 +38,56 @@ const setup = (
 };
 
 describe("dingjiang-mcp stdio dispatcher", () => {
+  it("refuses a line with QUEUE_OVERFLOW instead of growing the queue", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { dispatch, responses } = setup(
+      async (request) => {
+        await gate;
+        return success(request.id ?? null);
+      },
+      { maxPendingRequests: 1 },
+    );
+
+    dispatch(line(1));
+    dispatch(line(2));
+    // The overflow is answered immediately and still carries its own id.
+    expect(responses).toContainEqual({
+      jsonrpc: "2.0",
+      id: 2,
+      error: {
+        code: -32000,
+        message: "Server busy",
+        data: { code: "QUEUE_OVERFLOW", maxPendingRequests: 1 },
+      },
+    });
+
+    release();
+    await dispatch.drain();
+    expect(responses[responses.length - 1]?.id).toBe(1);
+  });
+
+  it("frees a queue slot once the in-flight request finishes", async () => {
+    const { dispatch, responses } = setup(async (request) =>
+      success(request.id ?? null),
+    );
+    dispatch(line(1));
+    await dispatch.drain();
+    dispatch(line(2));
+    await dispatch.drain();
+    expect(responses.map((response) => response.id)).toEqual([1, 2]);
+  });
+
+  it("keeps a bounded default instead of an unbounded queue", () => {
+    expect(DEFAULT_MAX_PENDING_REQUESTS).toBe(64);
+    expect(resolveMaxPendingRequests(undefined)).toBe(64);
+    expect(resolveMaxPendingRequests("0")).toBe(64);
+    expect(resolveMaxPendingRequests("abc")).toBe(64);
+    expect(resolveMaxPendingRequests("100000")).toBe(1_024);
+  });
+
   it("keeps response order even when later requests finish first", async () => {
     const delays = new Map<number, number>([
       [1, 30],

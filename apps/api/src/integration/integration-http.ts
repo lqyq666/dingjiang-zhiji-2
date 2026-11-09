@@ -189,9 +189,9 @@ export class IntegrationAuthGuard implements CanActivate {
     method: string,
   ): Promise<void> {
     if (!this.rateLimits) return;
-    // Off by default: turning it on changes the quota behaviour of an existing
-    // deployment, which is a decision for whoever runs it, not for an upgrade.
-    if (process.env.DINGJIANG_RATE_LIMIT_ENABLED !== "1") return;
+    // On by default; an operator can set DINGJIANG_RATE_LIMIT_ENABLED=0 to
+    // shed the ceiling during an incident, but silence is not the default.
+    if (process.env.DINGJIANG_RATE_LIMIT_ENABLED === "0") return;
     try {
       await this.rateLimits.assertWithinLimit(actor, method);
     } catch (error) {
