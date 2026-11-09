@@ -1,3 +1,4 @@
+import { exposableContentPreview } from "../materials/readable-body";
 import { runtimeTenantId } from "../runtime-config";
 import {
   BadRequestException,
@@ -114,7 +115,7 @@ export class ExperienceIntelligenceService {
             .filter((item) => item.status === "ACTIVE" && item.locator)
             .map((item) => ({
               title: item.title,
-              contentPreview: item.file?.contentPreview ?? null,
+              contentPreview: exposableContentPreview(item.file),
               verificationStatus: "UNVERIFIED_INPUT" as const,
               sourceObjectId: item.locator!.sourceObjectId,
               sourceVersionId: item.locator!.sourceVersionId,

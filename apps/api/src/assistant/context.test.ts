@@ -127,6 +127,58 @@ describe("VS16 assistant context material seam", () => {
     expect(vs01.rootCauseWorkpaper).toHaveBeenCalledWith("PRJ-OTD-001");
   });
 
+  it("withholds material bodies that are not readable or not extracted", async () => {
+    const previewOf = async (
+      readableByAi: boolean,
+      extractionStatus: "EXTRACTED" | "NEEDS_REVIEW",
+      contentPreview: string | null,
+    ) => {
+      const first = task.materials[0]!;
+      const vs01 = {
+        project: vi.fn().mockResolvedValue(project),
+        task: vi.fn().mockResolvedValue({
+          ...task,
+          materials: [
+            {
+              ...first,
+              file: {
+                ...(first.file ?? {}),
+                extractionStatus,
+                readableByAi,
+                contentPreview,
+              },
+            },
+          ],
+        }),
+        rootCauseWorkpaper: vi
+          .fn()
+          .mockResolvedValue({ latestConfirmed: null }),
+      };
+      const result = await new Vs01ContextAdapter(
+        vs01 as never,
+        {} as never,
+      ).currentWorkContext(scope);
+      return (
+        result as {
+          data?: {
+            sourceTask?: {
+              materials?: Array<{ file?: { contentPreview?: string | null } }>;
+            };
+          };
+        }
+      ).data?.sourceTask?.materials?.[0]?.file?.contentPreview;
+    };
+
+    // A body must not leak just because extraction produced text.
+    expect(await previewOf(false, "EXTRACTED", "不应外泄的正文")).toBeNull();
+    // Readable but still under review: still no body.
+    expect(await previewOf(true, "NEEDS_REVIEW", "尚未核验的正文")).toBeNull();
+    // Readable and extracted: this is the only case that returns a body.
+    expect(await previewOf(true, "EXTRACTED", "已核验正文")).toBe("已核验正文");
+    // Blank text is not a body.
+    expect(await previewOf(true, "EXTRACTED", "   ")).toBeNull();
+  });
+
   it("does not disguise a live workpaper runtime failure as an absent workpaper", async () => {
     const vs01 = {
       project: vi.fn().mockResolvedValue(project),

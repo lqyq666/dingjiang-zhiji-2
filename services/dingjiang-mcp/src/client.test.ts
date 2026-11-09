@@ -10,6 +10,7 @@ import {
 
 const originalBaseUrl = process.env.DINGJIANG_API_BASE_URL;
 const originalToken = process.env.DINGJIANG_MCP_API_TOKEN;
+const originalAllowedHosts = process.env.DINGJIANG_API_ALLOWED_HOSTS;
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -17,6 +18,9 @@ afterEach(() => {
   else process.env.DINGJIANG_API_BASE_URL = originalBaseUrl;
   if (originalToken === undefined) delete process.env.DINGJIANG_MCP_API_TOKEN;
   else process.env.DINGJIANG_MCP_API_TOKEN = originalToken;
+  if (originalAllowedHosts === undefined)
+    delete process.env.DINGJIANG_API_ALLOWED_HOSTS;
+  else process.env.DINGJIANG_API_ALLOWED_HOSTS = originalAllowedHosts;
 });
 
 describe("dingjiang-mcp Integration client", () => {
@@ -40,6 +44,43 @@ describe("dingjiang-mcp Integration client", () => {
       new DingjiangIntegrationClient().getProjectState("PRJ-1"),
     ).rejects.toThrow("仅允许 HTTPS /api，或本机 HTTP /api");
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("revalidates when the host allowlist narrows without a URL change", async () => {
+    process.env.DINGJIANG_API_BASE_URL = "https://api.example.com/api";
+    process.env.DINGJIANG_MCP_API_TOKEN = "local-secret";
+    delete process.env.DINGJIANG_API_ALLOWED_HOSTS;
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          ok: false,
+          error: {
+            code: "NOT_FOUND",
+            message: "授权范围内未找到该资源",
+            retryable: false,
+            requiresHuman: false,
+          },
+          correlationId: "27a2f751-c719-4a81-a16b-fdaa4fc2c6fb",
+        }),
+        { status: 404, headers: { "content-type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new DingjiangIntegrationClient();
+
+    // Empty allowlist: the URL passes validation and is cached.
+    await expect(client.getProjectState("PRJ-1")).rejects.toBeInstanceOf(
+      IntegrationClientError,
+    );
+
+    // The URL did not change, but the allowed host did. Reusing the cached
+    // result would keep sending the bearer token to a host that is no longer
+    // allowed.
+    process.env.DINGJIANG_API_ALLOWED_HOSTS = "other.example.com";
+    await expect(client.getProjectState("PRJ-1")).rejects.toThrow(
+      "不在 DINGJIANG_API_ALLOWED_HOSTS 白名单内",
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("maps the safe Integration failure without exposing authorization", async () => {

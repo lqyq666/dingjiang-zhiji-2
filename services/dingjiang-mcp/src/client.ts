@@ -110,15 +110,18 @@ const readJsonPayload = async (response: Response): Promise<unknown> => {
 // Validating a URL on every call was repeated work on the hot path. The cache is
 // keyed by the raw environment value, so tests and rotations that change
 // DINGJIANG_API_BASE_URL still trigger a fresh validation.
-let cachedBaseUrl: { raw: string; url: URL } | undefined;
+let cachedBaseUrl: { raw: string; allowedHosts: string; url: URL } | undefined;
 const integrationBaseUrl = (): URL => {
   const raw =
     process.env.DINGJIANG_API_BASE_URL?.trim() || "http://127.0.0.1:3001/api";
-  if (cachedBaseUrl?.raw === raw) return cachedBaseUrl.url;
-  const url = validateIntegrationBaseUrl(raw, {
-    allowedHosts: process.env.DINGJIANG_API_ALLOWED_HOSTS,
-  });
-  cachedBaseUrl = { raw, url };
+  const allowedHosts = process.env.DINGJIANG_API_ALLOWED_HOSTS?.trim() ?? "";
+  // The allowlist is part of the cache key. Narrowing it without touching the
+  // URL must re-run validation, otherwise a host removed from the list keeps
+  // receiving the bearer token until the process restarts.
+  if (cachedBaseUrl?.raw === raw && cachedBaseUrl.allowedHosts === allowedHosts)
+    return cachedBaseUrl.url;
+  const url = validateIntegrationBaseUrl(raw, { allowedHosts });
+  cachedBaseUrl = { raw, allowedHosts, url };
   return url;
 };
 

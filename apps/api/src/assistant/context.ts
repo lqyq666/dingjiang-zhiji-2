@@ -3,13 +3,11 @@ import type { TaskMaterial } from "@dingjiang/contracts";
 
 import type { AssistantScope, AssistantToolResult } from "./contracts";
 import { rejectModelScopeArguments } from "./scope";
+import { exposableContentPreview } from "../materials/readable-body";
 import { Vs01Service } from "../vs01.service";
 import { AssistantStore } from "./store";
 
-const safeMaterial = (
-  material: TaskMaterial,
-  contentPreview = material.file?.contentPreview ?? null,
-) => {
+const safeMaterial = (material: TaskMaterial) => {
   const verification = material.verification;
   const latestVerificationAudit =
     verification.status === "UNVERIFIED" ||
@@ -44,7 +42,10 @@ const safeMaterial = (
           originalName: material.file.originalName,
           mediaType: material.file.mediaType,
           extractionStatus: material.file.extractionStatus,
-          contentPreview,
+          // The only way body text reaches this payload. Both the aggregate
+          // context and the single preview rely on it, so the two cannot
+          // disagree about what is exposable.
+          contentPreview: exposableContentPreview(material.file),
           readableByAi: material.file.readableByAi,
         }
       : null,
@@ -193,7 +194,7 @@ export class Vs01ContextAdapter {
     ) {
       return {
         status: "BODY_NOT_AVAILABLE",
-        data: { material: safeMaterial(material, null) },
+        data: { material: safeMaterial(material) },
       };
     }
     return {
