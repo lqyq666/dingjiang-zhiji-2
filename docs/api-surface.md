@@ -51,6 +51,7 @@
 | GET  | `/api/integration/projects/current/work-item`                      | `currentWorkItem`     |
 | GET  | `/api/integration/projects/:id/context`                            | `projectContext`      |
 | GET  | `/api/integration/projects/:id/state`                              | `projectState`        |
+| GET  | `/api/integration/projects/:id/next-action`                        | `nextAction`          |
 | GET  | `/api/integration/projects/:id/evidence`                           | `evidence`            |
 | GET  | `/api/integration/projects/:id/materials`                          | `materials`           |
 | GET  | `/api/integration/projects/:id/work-items`                         | `workItems`           |

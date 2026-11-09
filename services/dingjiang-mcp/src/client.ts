@@ -27,6 +27,7 @@ import {
   workpaperProposeResultSchema,
   materialCreateResultSchema,
   evidenceProposeResultSchema,
+  nextActionSchema,
   type IntegrationFailureEnvelope,
   type WorkpaperProposeRequest,
   type MaterialCreateRequest,
@@ -285,6 +286,15 @@ export class DingjiangIntegrationClient {
     return this.get(
       `integration/projects/${encodeURIComponent(projectId)}/source-versions/${encodeURIComponent(sourceVersionId)}`,
       integrationSourceVersionSchema,
+    );
+  }
+
+  /** Derived on the server: "what happens next" is a business rule, not a
+   * formatting decision, and a second front end must get the same answer. */
+  getNextAction(projectId: string) {
+    return this.get(
+      `integration/projects/${encodeURIComponent(projectId)}/next-action`,
+      nextActionSchema,
     );
   }
 

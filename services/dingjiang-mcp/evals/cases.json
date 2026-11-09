@@ -188,7 +188,7 @@
         "projectId": "PRJ-DEMO"
       },
       "expect": {
-        "calledMethods": ["listTraceableMaterials"]
+        "calledMethods": ["getNextAction"]
       }
     },
     {

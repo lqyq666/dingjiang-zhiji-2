@@ -33,6 +33,7 @@ import {
   integrationValidationWorkpaperSchema,
   integrationWorkItemListSchema,
   evidenceProposalReviewListSchema,
+  nextActionSchema,
 } from "@dingjiang/contracts";
 
 import {
@@ -175,21 +176,6 @@ const annotationsFor = (name: string): ToolAnnotations => {
  * compile error, which is the cheapest possible guard for the one field an
  * agent is most likely to over-read.
  */
-const nextActionSchema = z
-  .object({
-    kind: z.enum(["WORK_ITEM", "MATERIAL_GAP", "HUMAN_GATE_OR_REVIEW"]),
-    projectId: z.string(),
-    workItemId: z.string().optional(),
-    requirementId: z.string().optional(),
-    title: z.string(),
-    responsibleRole: z.string().optional(),
-    explanation: z.string(),
-    classification: z.literal("PROPOSAL"),
-  })
-  .strict();
-
-type NextAction = z.infer<typeof nextActionSchema>;
-
 /**
  * Output contracts for the three aggregate tools.
  *
@@ -336,6 +322,7 @@ export type IntegrationClient = Pick<
   | "getMaterialPreview"
   | "getSourceVersion"
   | "getValidationWorkpaper"
+  | "getNextAction"
   | "searchFormalExperiences"
   | "getFormalExperience"
   | "getExperienceEvidence"
@@ -1194,39 +1181,11 @@ const loadEvidenceBundle = async (
  * emitted payload drift apart. Parsing makes the declaration true at runtime
  * and keeps `classification` pinned to PROPOSAL.
  */
-const deriveNextAction = (
-  state: Awaited<ReturnType<IntegrationClient["getProjectState"]>>,
-  currentWorkItem: Awaited<ReturnType<IntegrationClient["getCurrentWorkItem"]>>,
-  materials: Awaited<ReturnType<IntegrationClient["listTraceableMaterials"]>>,
-): NextAction => {
-  if (currentWorkItem.projectId === state.id && currentWorkItem.item)
-    return nextActionSchema.parse({
-      kind: "WORK_ITEM",
-      projectId: state.id,
-      workItemId: currentWorkItem.item.id,
-      title: currentWorkItem.item.title,
-      responsibleRole: currentWorkItem.item.owner,
-      explanation: "当前服务端派生事项优先处理",
-      classification: "PROPOSAL",
-    });
-  const gap = materials.gaps[0];
-  if (gap)
-    return nextActionSchema.parse({
-      kind: "MATERIAL_GAP",
-      projectId: state.id,
-      requirementId: gap.requirementId,
-      title: gap.label,
-      explanation: `材料缺口状态为 ${gap.status}`,
-      classification: "PROPOSAL",
-    });
-  return nextActionSchema.parse({
-    kind: "HUMAN_GATE_OR_REVIEW",
-    projectId: state.id,
-    title: "查看当前状态对应的人工 gate 或完成条件",
-    explanation: `项目状态为 ${state.status}`,
-    classification: "PROPOSAL",
-  });
-};
+// `deriveNextAction` used to live here. It is a business rule (stage + current
+// work item + material gaps -> next action), so it moved to
+// apps/api/src/integration/next-action.service.ts. This adapter now calls
+// GET /api/integration/projects/:id/next-action, and a second front end gets
+// the same answer instead of a copy of the rule.
 
 const callTool = async (client: IntegrationClient, params: unknown) => {
   const parsed = z
@@ -1285,23 +1244,14 @@ const callTool = async (client: IntegrationClient, params: unknown) => {
             "当前项目与当前事项不一致，请刷新后重试",
             true,
           );
-        const [work, bundle] = await Promise.all([
+        const [work, bundle, nextAction] = await Promise.all([
           loadWorkContext(client, projectId, currentWorkItem),
           loadEvidenceBundle(client, projectId),
+          client.getNextAction(projectId),
         ]);
         return toolResult(
           assertCompositeShape(
-            {
-              projects,
-              ...work,
-              ...bundle,
-              currentWorkItem,
-              nextAction: deriveNextAction(
-                work.state,
-                currentWorkItem,
-                bundle.materials,
-              ),
-            },
+            { projects, ...work, ...bundle, currentWorkItem, nextAction },
             Object.keys(workspaceResumeOutput.shape),
           ),
         );
@@ -1330,13 +1280,7 @@ const callTool = async (client: IntegrationClient, params: unknown) => {
       }
       case "project.next_action": {
         const body = identifierInput.parse(input);
-        const [work, materials] = await Promise.all([
-          loadWorkContext(client, body.projectId),
-          client.listTraceableMaterials(body.projectId),
-        ]);
-        return toolResult(
-          deriveNextAction(work.state, work.currentWorkItem, materials),
-        );
+        return toolResult(await client.getNextAction(body.projectId));
       }
       case "list_projects": {
         emptyInput.parse(input);

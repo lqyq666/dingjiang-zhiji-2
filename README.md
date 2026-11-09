@@ -12,7 +12,7 @@
 | 维度     | 内容                                                                                                                                   |
 | -------- | -------------------------------------------------------------------------------------------------------------------------------------- |
 | 技术栈   | TypeScript（strict）· NestJS · Next.js · PostgreSQL 17 + pgvector · Zod · pnpm / Turborepo · Vitest · Docker Compose                   |
-| 代码规模 | 3 个运行时 + 1 个共享契约包；41 个迁移 / 60 张表 / 85 条 HTTP 路由 / MCP 28 个工具                                                     |
+| 代码规模 | 3 个运行时 + 1 个共享契约包；41 个迁移 / 60 张表 / 86 条 HTTP 路由 / MCP 28 个工具                                                     |
 | 工程治理 | 依赖方向写成 `severity: error` 规则；`tooling/architecture/` 下 6 个守卫测试把边界、尺寸、孤儿代码、接口面、许可证和文档数字钉在代码上 |
 | 可验证性 | `pnpm verify` 串起依赖分析、lint、类型、单测、构建、MCP 评测、格式与集成测试；五层集成测试 0 跳过，tier4 起真实进程与真实 PostgreSQL   |
 | 性能     | 三条热读路径有同机「删索引 / 建索引」前后对比，脚本可复现（[性能基准](#性能基准)）                                                     |
@@ -100,7 +100,7 @@ flowchart LR
 
   subgraph API["apps/api · NestJS"]
     Guard["接入层：CORS / 鉴权 / 安全过滤"]
-    Ctrl["Controllers · 85 条路由"]
+    Ctrl["Controllers · 86 条路由"]
     Kernel["受治理命令内核<br/>requestId 幂等 · expectedVersion 乐观并发"]
     Domain["领域层 · 六个上下文<br/>读模型 / 项目状态机 / 材料 / 经验 / 助手 / 任务决策"]
   end
@@ -198,9 +198,9 @@ pnpm test:coverage   # tier1 全量 + 27 开关，产出覆盖率并按阈值退
 
 CI 的 `integration` job 会在 `test:integration` 之后跑它，阈值定义在 `apps/api/vitest.config.mts`（当前约 74% 行、81% 函数、72% 语句、62% 分支）。
 
-上面「核心边界」那几条不是文档承诺，而是可执行的检查。`pnpm depcruise`（`.dependency-cruiser.cjs`）把依赖方向写成规则并接入 CI：Web 与 MCP 适配层不得 import API 实现或数据库驱动，合同不得依赖实现，API 不得反向依赖入口层。当前扫描 302 个模块、670 条依赖，零违规；这两个数字由 `documentation.test.ts` 直接调用依赖分析器核对，模块一变文档不跟着改就会红。
+上面「核心边界」那几条不是文档承诺，而是可执行的检查。`pnpm depcruise`（`.dependency-cruiser.cjs`）把依赖方向写成规则并接入 CI：Web 与 MCP 适配层不得 import API 实现或数据库驱动，合同不得依赖实现，API 不得反向依赖入口层。当前扫描 303 个模块、673 条依赖，零违规；这两个数字由 `documentation.test.ts` 直接调用依赖分析器核对，模块一变文档不跟着改就会红。
 
-同一批守卫里还有几道防漂移的：`tooling/architecture/orphan-files.test.ts` 扫出**没有任何地方 import 的源码文件**（CLI 入口、Next.js 约定文件与 package script 指向的入口已排除），所以"实现了但实际不可达"的代码进不来——它一进来 CI 就红，并指名是哪个文件。`documentation.test.ts` 核对文档里提到的命令与链接是否真的存在，`licence.test.ts` 用 sha256 钉住许可证原文，`api-surface.test.ts` 让 85 条路由的文档无法与代码脱节。
+同一批守卫里还有几道防漂移的：`tooling/architecture/orphan-files.test.ts` 扫出**没有任何地方 import 的源码文件**（CLI 入口、Next.js 约定文件与 package script 指向的入口已排除），所以"实现了但实际不可达"的代码进不来——它一进来 CI 就红，并指名是哪个文件。`documentation.test.ts` 核对文档里提到的命令与链接是否真的存在，`licence.test.ts` 用 sha256 钉住许可证原文，`api-surface.test.ts` 让 86 条路由的文档无法与代码脱节。
 
 ## 工程亮点
 
@@ -275,7 +275,7 @@ MCP 工具面除参数 schema 外还声明 `annotations`（读写、破坏性、
 | [DESIGN.md](DESIGN.md)                                             | Web 端设计系统：OKLCH 色板、层级与排版规则                         |
 | [docs/architecture/domain-map.md](docs/architecture/domain-map.md) | 领域概念 → 实现文件 / 关键表 / 验证命令的索引，供深挖时定位        |
 | [docs/architecture/](docs/architecture/)                           | 系统全景、系统不变量、集成就绪度与各子系统边界                     |
-| [docs/api-surface.md](docs/api-surface.md)                         | 全部 85 条 HTTP 路由（自动生成，带防漂移守卫）                     |
+| [docs/api-surface.md](docs/api-surface.md)                         | 全部 86 条 HTTP 路由（自动生成，带防漂移守卫）                     |
 | [docs/research/](docs/research/)                                   | 前期调研：顾问工作方法、绩效顾问工作流、界面工作流研究             |
 | [docs/product/](docs/product/)                                     | 前端 POC 蓝图与视觉资产                                            |
 | [docs/demo/](docs/demo/)                                           | 演示脚本：经验智能这一段的完整走查                                 |

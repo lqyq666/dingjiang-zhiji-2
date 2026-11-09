@@ -19,6 +19,7 @@ import {
   type IntegrationRequest,
 } from "./integration-http";
 import { IntegrationService } from "./integration.service";
+import { NextActionService } from "./next-action.service";
 
 @Controller("integration")
 @UseGuards(IntegrationAuthGuard)
@@ -27,6 +28,8 @@ export class IntegrationController {
   constructor(
     @Inject(IntegrationService)
     private readonly integration: IntegrationService,
+    @Inject(NextActionService)
+    private readonly nextActions: NextActionService,
   ) {}
 
   private success(request: IntegrationRequest, data: unknown) {
@@ -148,6 +151,17 @@ export class IntegrationController {
     return this.success(
       request,
       await this.integration.projectState(integrationPrincipal(request), id),
+    );
+  }
+
+  @Get("projects/:id/next-action")
+  async nextAction(
+    @Param("id") id: string,
+    @Req() request: IntegrationRequest,
+  ) {
+    return this.success(
+      request,
+      await this.nextActions.derive(integrationPrincipal(request), id),
     );
   }
 

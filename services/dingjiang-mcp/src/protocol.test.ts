@@ -24,6 +24,13 @@ const client = (): IntegrationClient => ({
     .mockResolvedValue({ items: [], currentProjectId: null }),
   getCurrentProject: vi.fn().mockResolvedValue({ id: "PRJ-1" }),
   getProjectContext: vi.fn().mockResolvedValue({ project: { id: "PRJ-1" } }),
+  getNextAction: vi.fn().mockResolvedValue({
+    kind: "HUMAN_GATE_OR_REVIEW",
+    projectId: "PRJ-1",
+    title: "查看当前状态对应的人工 gate 或完成条件",
+    explanation: "项目状态为 ACTIVE",
+    classification: "PROPOSAL",
+  }),
   getProjectState: vi.fn().mockResolvedValue({ id: "PRJ-1" }),
   getCurrentWorkItem: vi
     .fn()

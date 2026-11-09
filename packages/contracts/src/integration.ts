@@ -263,6 +263,28 @@ export const integrationErrorSchema = z.object({
   requiresHuman: z.boolean(),
 });
 
+/**
+ * The single derived next action for a project.
+ *
+ * Derived on the server because "what happens next" is a business rule: stage,
+ * current work item and material gaps decide it. A second front end must get
+ * the same answer, so it lives here rather than in one adapter.
+ */
+export const nextActionSchema = z
+  .object({
+    kind: z.enum(["WORK_ITEM", "MATERIAL_GAP", "HUMAN_GATE_OR_REVIEW"]),
+    projectId: z.string(),
+    workItemId: z.string().optional(),
+    requirementId: z.string().optional(),
+    title: z.string(),
+    responsibleRole: z.string().optional(),
+    explanation: z.string(),
+    classification: z.literal("PROPOSAL"),
+  })
+  .strict();
+
+export type NextAction = z.infer<typeof nextActionSchema>;
+
 export const integrationFailureEnvelopeSchema = z.object({
   ok: z.literal(false),
   error: integrationErrorSchema,
