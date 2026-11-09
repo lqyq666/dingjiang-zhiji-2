@@ -43,7 +43,37 @@ pnpm --filter @dingjiang/mcp build
 - 只认扁平工具名（`get_project_context`、`list_evidence`）的客户端：在 `env` 里加 `"DINGJIANG_MCP_TOOL_SURFACE": "compatibility"`，该进程给 23 个工具。
 - 两类都要用就配两条条目、各起一个进程；令牌可以复用，工具面互不影响。
 
-各客户端的配置文件位置与字段名以其官方文档为准；上面是 MCP 标准的 stdio 条目形状，字段为 `command` / `args` / `env`。
+### Codex CLI
+
+Codex 用 TOML，配置在 `~/.codex/config.toml`（或受信项目里的 `.codex/config.toml`）。令牌用 `env_vars` 从 shell 继承，配置文件本身就不含秘密、可以提交：
+
+```toml
+[mcp_servers.dingjiang]
+command = "node"
+args = ["/absolute/path/to/services/dingjiang-mcp/dist/server.js"]
+# 本地 node 启动很快，默认 10s 足够；放在慢磁盘上可放宽。
+startup_timeout_sec = 20
+# 必须大于 DINGJIANG_MCP_TIMEOUT_MS（默认 10s），否则 Codex 先断开，看不到结构化错误。
+tool_timeout_sec = 30
+# 只在写工具前弹确认，读工具直接执行；依赖服务端 annotations.readOnlyHint。
+default_tools_approval_mode = "writes"
+
+# 从当前 shell 继承，不把令牌写进文件
+env_vars = ["DINGJIANG_MCP_API_TOKEN"]
+env = { DINGJIANG_API_BASE_URL = "http://127.0.0.1:3001/api" }
+```
+
+如果只想让 Codex 只读，把它限制在读工具上：
+
+```toml
+disabled_tools = ["work.execute", "material.verify", "evidence.confirm", "workpaper.propose", "material.create", "evidence.propose"]
+```
+
+`codex mcp list` 看连接状态与工具数，`codex mcp logs` 看握手失败原因。一个容易误判的点：`INTEGRATION_TIMEOUT` **不等于请求失败**——写操作可能已经提交，必须用原 `requestId` 重新核对，不能改号重试。
+
+### 其他客户端
+
+各客户端的配置文件位置与字段名以其官方文档为准；上面 JSON 是 MCP 标准的 stdio 条目形状，字段为 `command` / `args` / `env`。Codex 用 TOML，字段名与上面示例一致。
 
 **WorkBuddy 5.3.14 的实测差异**：它不展开 `env` 里的 `${VAR}`，也不会让已运行进程重新继承 Windows 用户环境变量。因此令牌要直接写进当前用户的 `~/.workbuddy/mcp.json`（明文，仅本机，不要提交）。改完配置要新建会话——stdio 进程随会话启动，旧进程读不到新值。
 
