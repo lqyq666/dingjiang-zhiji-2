@@ -36,34 +36,34 @@ afterEach(() => {
 });
 
 describe("Integration HTTP authorization boundary", () => {
-  it("fails closed when the server token is not configured", () => {
+  it("fails closed when the server token is not configured", async () => {
     delete process.env.DINGJIANG_MCP_API_TOKEN;
     const guard = new IntegrationAuthGuard();
-    expect(() => guard.canActivate(contextFor({ headers: {} }))).toThrow(
-      ServiceUnavailableException,
-    );
+    await expect(
+      guard.canActivate(contextFor({ headers: {} })),
+    ).rejects.toThrow(ServiceUnavailableException);
   });
 
-  it("rejects the wrong token without attaching a principal", () => {
+  it("rejects the wrong token without attaching a principal", async () => {
     process.env.DINGJIANG_MCP_API_TOKEN = "correct-local-secret";
     const request: IntegrationRequest = {
       headers: { authorization: "Bearer wrong-local-secret" },
     };
     const guard = new IntegrationAuthGuard();
-    expect(() => guard.canActivate(contextFor(request))).toThrow(
+    await expect(guard.canActivate(contextFor(request))).rejects.toThrow(
       UnauthorizedException,
     );
     expect(request.integrationPrincipal).toBeUndefined();
   });
 
-  it("binds tenant, subject, role and read scopes after authentication", () => {
+  it("binds tenant, subject, role and read scopes after authentication", async () => {
     process.env.DINGJIANG_MCP_API_TOKEN = "correct-local-secret";
     process.env.DINGJIANG_MCP_PROJECT_IDS = "PRJ-1,PRJ-2";
     const request: IntegrationRequest = {
       headers: { authorization: "Bearer correct-local-secret" },
     };
     const guard = new IntegrationAuthGuard();
-    expect(guard.canActivate(contextFor(request))).toBe(true);
+    await expect(guard.canActivate(contextFor(request))).resolves.toBe(true);
     expect(request.integrationPrincipal).toEqual({
       tenantId: "tenant-demo",
       subjectId: "demo-pmc",
@@ -80,16 +80,16 @@ describe("Integration HTTP authorization boundary", () => {
     });
   });
 
-  it("adds only workpaper:write when explicitly enabled for concrete projects", () => {
+  it("adds only workpaper:write when explicitly enabled for concrete projects", async () => {
     process.env.DINGJIANG_MCP_API_TOKEN = "correct-local-secret";
     process.env.DINGJIANG_MCP_PROJECT_IDS = "PRJ-1";
     process.env.DINGJIANG_WORKPAPER_PROPOSE_ENABLED = "1";
     const request: IntegrationRequest = {
       headers: { authorization: "Bearer correct-local-secret" },
     };
-    expect(new IntegrationAuthGuard().canActivate(contextFor(request))).toBe(
-      true,
-    );
+    await expect(
+      new IntegrationAuthGuard().canActivate(contextFor(request)),
+    ).resolves.toBe(true);
     expect(request.integrationPrincipal).toMatchObject({
       role: "PMC",
       projectIds: ["PRJ-1"],
@@ -100,15 +100,15 @@ describe("Integration HTTP authorization boundary", () => {
     const wildcardRequest: IntegrationRequest = {
       headers: { authorization: "Bearer correct-local-secret" },
     };
-    expect(
+    await expect(
       new IntegrationAuthGuard().canActivate(contextFor(wildcardRequest)),
-    ).toBe(true);
+    ).resolves.toBe(true);
     expect(wildcardRequest.integrationPrincipal?.scopes).not.toContain(
       "workpaper:write",
     );
   });
 
-  it("binds a multi-token identity without trusting caller role headers", () => {
+  it("binds a multi-token identity without trusting caller role headers", async () => {
     delete process.env.DINGJIANG_MCP_API_TOKEN;
     process.env.DINGJIANG_MCP_TOKEN_BINDINGS_JSON = JSON.stringify([
       {
@@ -126,9 +126,9 @@ describe("Integration HTTP authorization boundary", () => {
         "x-role": "EXPERT_REVIEWER",
       },
     };
-    expect(new IntegrationAuthGuard().canActivate(contextFor(request))).toBe(
-      true,
-    );
+    await expect(
+      new IntegrationAuthGuard().canActivate(contextFor(request)),
+    ).resolves.toBe(true);
     expect(request.integrationPrincipal).toEqual({
       tenantId: "tenant-demo",
       subjectId: "owner-1",

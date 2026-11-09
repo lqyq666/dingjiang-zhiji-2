@@ -10,6 +10,7 @@ import {
   IntegrationExceptionFilter,
 } from "./integration-http";
 import { IntegrationService } from "./integration.service";
+import { RateLimitService } from "./rate-limit.service";
 import { GovernedCommandKernel } from "../command-kernel/governed-command-kernel";
 import { WorkpaperProposalCommand } from "../workpapers/workpaper-proposal-command";
 import { MaterialCreateCommand } from "../materials/material-create-command";
@@ -22,6 +23,7 @@ import { FeishuWorkNotifier } from "./feishu-work.notifier";
   providers: [
     IntegrationAuthGuard,
     IntegrationExceptionFilter,
+    RateLimitService,
     {
       provide: WorkpaperProposalCommand,
       inject: [GovernedCommandKernel],

@@ -272,7 +272,15 @@ const main = async () => {
     {
       name: "tier4 真实端到端（MCP 进程 → HTTP → API 进程 → PostgreSQL）",
       files: e2eFiles,
-      env: { DATABASE_URL: databaseUrl, REAL_E2E: "1" },
+      env: {
+        DATABASE_URL: databaseUrl,
+        REAL_E2E: "1",
+        // The suite drives many writes through one credential from several
+        // processes. The 429 path is covered by rate-limit.service.test.ts;
+        // here the ceiling only needs to stay out of the way.
+        DINGJIANG_RATE_LIMIT_READ_PER_MIN: "100000",
+        DINGJIANG_RATE_LIMIT_WRITE_PER_MIN: "100000",
+      },
     },
     {
       name: "tier5 真实前端数据层（Web → HTTP → API 进程 → PostgreSQL）",

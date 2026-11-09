@@ -118,6 +118,7 @@ Integration client 将失败分为三类，避免把服务端问题误报为调�
 | `HANDLER_FAILURE`                         | stdio    | handler 抛异常，已隔离                      | 看 stderr；后续请求仍会继续处理                    |
 | `FORBIDDEN`                               | API      | 身份、scope 或项目越权                      | 换有权限的身份；聚合工具不会把它降级成「暂无数据」 |
 | `NOT_FOUND`                               | API      | 资源不存在或不在授权范围                    | 单条工具原样返回；聚合工具降级为 `null`            |
+| `RATE_LIMITED`                            | API      | 单凭证每分钟请求超过上限                    | 按 `Retry-After` 等待后重试；读写额度分开计        |
 | `INTEGRATION_TIMEOUT`                     | 传输     | 请求超时                                    | **不要改 requestId 重试**，用原请求核对服务端状态  |
 | `INTEGRATION_NETWORK_ERROR`               | 传输     | 连不上 API                                  | 确认本地服务已启动、`DINGJIANG_API_BASE_URL` 正确  |
 | `INTEGRATION_INVALID_RESPONSE`            | 传输     | 响应与 contract 不一致                      | 检查服务端与 MCP 的版本是否匹配                    |

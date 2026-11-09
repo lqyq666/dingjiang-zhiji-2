@@ -47,8 +47,8 @@
                 │  只有这里碰 SQL
 ┌───────────────▼────────────────────────────────────────────────────────┐
 │                              数据层                                     │
-│  PostgreSQL 17 + pgvector · 59 张表 · 业务表全部 FORCE ROW LEVEL SECURITY │
-│  不可变 SourceVersion · 受治理命令回执 · 事件表 · 迁移 40 个（含校验和） │
+│  PostgreSQL 17 + pgvector · 60 张表 · 业务表全部 FORCE ROW LEVEL SECURITY │
+│  不可变 SourceVersion · 受治理命令回执 · 事件表 · 迁移 41 个（含校验和） │
 │  文件内容库（MaterialContentVault，按 sha256 寻址）                      │
 └────────────────────────────────────────────────────────────────────────┘
 ```

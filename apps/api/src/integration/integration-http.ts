@@ -26,6 +26,7 @@ import { GovernedCommandFailure } from "../command-kernel/governed-command-kerne
 import { governedCommandHttpError } from "../command-kernel/governed-command-http";
 import { isProduction } from "../runtime-config";
 import { productionWritesEnabled } from "../production-write-policy";
+import { RateLimitExceeded, RateLimitService } from "./rate-limit.service";
 import { IdentityService } from "../identity/identity.service";
 
 export type IntegrationRequest = {
@@ -38,6 +39,7 @@ export type IntegrationRequest = {
 type IntegrationResponse = {
   status(code: number): IntegrationResponse;
   json(body: unknown): void;
+  setHeader(name: string, value: string): void;
 };
 
 const firstHeader = (
@@ -144,31 +146,62 @@ export class IntegrationAuthGuard implements CanActivate {
     @Optional()
     @Inject(IdentityService)
     private readonly identity?: IdentityService,
+    @Optional()
+    @Inject(RateLimitService)
+    private readonly rateLimits?: RateLimitService,
   ) {}
-  canActivate(context: ExecutionContext): boolean | Promise<boolean> {
+
+  async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<IntegrationRequest>();
     integrationCorrelationId(request);
     const authorization = firstHeader(request.headers.authorization);
     const actual = authorization?.startsWith("Bearer ")
       ? authorization.slice("Bearer ".length).trim()
       : "";
+    const method = request.method ?? "GET";
     if (isProduction()) {
       if (!this.identity)
         throw new ServiceUnavailableException("Identity service unavailable");
-      return this.identity.mcpPrincipal(actual).then((principal) => {
-        if (request.method !== "GET" && !productionWritesEnabled())
-          throw new ServiceUnavailableException(
-            "生产业务写入尚未通过验收，当前只读",
-          );
-        request.integrationPrincipal = principal;
-        return true;
-      });
+      const principal = await this.identity.mcpPrincipal(actual);
+      if (request.method !== "GET" && !productionWritesEnabled())
+        throw new ServiceUnavailableException(
+          "生产业务写入尚未通过验收，当前只读",
+        );
+      request.integrationPrincipal = principal;
+      await this.enforceRateLimit(context, principal, method);
+      return true;
     }
     const principal = principalForToken(actual);
     if (!actual || !principal)
       throw new UnauthorizedException("Integration API 访问令牌无效");
     request.integrationPrincipal = principal;
+    await this.enforceRateLimit(context, principal, method);
     return true;
+  }
+
+  /**
+   * Counting happens after authentication: an unauthenticated request has no
+   * credential to charge, and it already fails at the guard above.
+   */
+  private async enforceRateLimit(
+    context: ExecutionContext,
+    actor: { tenantId: string; subjectId: string; credentialId?: string },
+    method: string,
+  ): Promise<void> {
+    if (!this.rateLimits) return;
+    // Off by default: turning it on changes the quota behaviour of an existing
+    // deployment, which is a decision for whoever runs it, not for an upgrade.
+    if (process.env.DINGJIANG_RATE_LIMIT_ENABLED !== "1") return;
+    try {
+      await this.rateLimits.assertWithinLimit(actor, method);
+    } catch (error) {
+      if (error instanceof RateLimitExceeded)
+        context
+          .switchToHttp()
+          .getResponse()
+          .setHeader("Retry-After", String(error.retryAfterSeconds));
+      throw error;
+    }
   }
 }
 
@@ -238,6 +271,16 @@ const errorFor = (
           requiresHuman: false,
         },
       };
+    if (status === 429)
+      return {
+        status,
+        error: {
+          code: "RATE_LIMITED",
+          message: "请求过于频繁，请按 Retry-After 重试",
+          retryable: true,
+          requiresHuman: false,
+        },
+      };
   }
   return {
     status: 500,
@@ -257,6 +300,10 @@ export class IntegrationExceptionFilter implements ExceptionFilter {
     const request = http.getRequest<IntegrationRequest>();
     const response = http.getResponse<IntegrationResponse>();
     const mapped = errorFor(exception);
+    // The guard sets this too, but a 429 can also come from a later layer;
+    // repeating it here keeps the header on every rate-limited response.
+    if (exception instanceof RateLimitExceeded)
+      response.setHeader("Retry-After", String(exception.retryAfterSeconds));
     response.status(mapped.status).json({
       ok: false,
       error: mapped.error,

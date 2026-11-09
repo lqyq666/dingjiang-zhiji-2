@@ -251,6 +251,7 @@ export const integrationErrorCodeSchema = z.enum([
   "INVALID_REQUEST",
   "STALE_VERSION",
   "CONFLICT",
+  "RATE_LIMITED",
   "TEMPORARILY_UNAVAILABLE",
   "INTERNAL_ERROR",
 ]);
