@@ -8,6 +8,7 @@ import {
   type OnModuleDestroy,
 } from "@nestjs/common";
 import type { PoolClient } from "pg";
+import { requiresHumanApproval } from "../command-kernel/production-authorization";
 import {
   workExecutionRequestSchema,
   workExecutionPayloadSchema,
@@ -174,20 +175,27 @@ export class WorkExecutionService implements OnModuleDestroy {
         projectId,
       );
       await client.query("COMMIT");
+      const allowedActions = actions.filter((action) => {
+        if ((action === "event.start") === Boolean(target.project))
+          return false;
+        const rule = policy(action);
+        return (
+          principal.projectIds.includes(projectId) &&
+          principal.role === rule.role &&
+          principal.scopes.some((scope) => scope === rule.scope)
+        );
+      });
       return {
         ...target,
         version,
         stateFingerprint: fingerprint(target.project ?? target.sourceTask!),
-        allowedActions: actions.filter((action) => {
-          if ((action === "event.start") === Boolean(target.project))
-            return false;
-          const rule = policy(action);
-          return (
-            principal.projectIds.includes(projectId) &&
-            principal.role === rule.role &&
-            principal.scopes.some((scope) => scope === rule.scope)
-          );
-        }),
+        allowedActions,
+        // Which of the allowed actions need a human approval record. This comes
+        // from the same predicate the write path enforces, so the signal cannot
+        // drift from the rule it describes.
+        approvalRequiredActions: allowedActions.filter((action) =>
+          requiresHumanApproval("work.execute", { operation: { action } }),
+        ),
       };
     } catch (error) {
       await client.query("ROLLBACK");

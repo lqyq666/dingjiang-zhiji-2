@@ -220,7 +220,7 @@ business 面 13 个、compatibility 面 23 个，去重 28 个；下表按读 / 
 
 兼容工具面的扁平命名是为旧宿主保留的，两套工具面共享同一批实现与同一份工具定义（`toolRegistry`）。新增工具要同时更新实现、治理分类与两套视图，`tool-contract.test.ts` 会拦住只改一半的情况。
 
-`work.execute` 必须先读取 `work.operations` 的 version、stateFingerprint 和 allowedActions。用户明确确认后记录原话；已知字段由助手关联。相同请求重放返回原回执，不重复执行。状态过期拒绝覆盖；超时保留原请求核对。版本、状态、不可覆盖来源及审计同事务提交。
+`work.execute` 必须先读取 `work.operations` 的 version、stateFingerprint 和 allowedActions。返回里还有 `approvalRequiredActions`：这些动作需要可信人工控制台签发的一次性授权记录（`production_human_approvals`，绑定身份、requestId、项目、内容指纹与 expectedVersion，10 分钟过期、单次消费）。宿主用它决定何时向人确认，但**它只是信号**——服务端仍以那张表为准，模型自述与客户端声明都不参与判定。用户明确确认后记录原话；已知字段由助手关联。相同请求重放返回原回执，不重复执行。状态过期拒绝覆盖；超时保留原请求核对。版本、状态、不可覆盖来源及审计同事务提交。
 
 新增权限不会自动授予旧 token：PMC 需要 workitem:write；材料核验/证据确认分别需要 material:verify / evidence:confirm；OWNER 定稿需要 project:approve；EXPERT_REVIEWER 发布需要 experience:publish。新事件必须有明确的预留项目白名单项，例如 PRJ-SO-202608136，workspace.events 才会提供入口。现有项目继续使用原 ID。
 

@@ -75,6 +75,10 @@ export const workExecutionContextSchema = z.object({
   version: z.number().int().nonnegative(),
   stateFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
   allowedActions: z.array(z.string()),
+  // A subset of `allowedActions` that the server only accepts together with a
+  // matching human approval record. Hosts use it to decide when to ask the
+  // person; it is a signal, never an authorization.
+  approvalRequiredActions: z.array(z.string()).default([]),
 });
 export type WorkAction = z.infer<typeof workActionSchema>;
 export type WorkExecutionRequest = z.infer<typeof workExecutionRequestSchema>;

@@ -272,6 +272,9 @@ const run = process.env.WORK_EXECUTION_INTEGRATION === "1";
       const context = await service.context(principal, reserved);
       expect(context.project).toBeNull();
       expect(context.allowedActions).toEqual(["event.start"]);
+      // Starting an event needs a human approval record; progress.record is the
+      // only exempted action, so the signal must not list it.
+      expect(context.approvalRequiredActions).toEqual(["event.start"]);
       const start: WorkExecutionRequest = {
         requestId: randomUUID(),
         correlationId: randomUUID(),
