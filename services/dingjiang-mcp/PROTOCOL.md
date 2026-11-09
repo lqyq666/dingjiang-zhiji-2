@@ -14,7 +14,33 @@
 
 代价也要说清：协议演进要自己跟。当前只在 `session-profile.ts` 里声明 `2025-06-18` 一个常量，将来升级是改一处常量加一处回包，而不是改一套框架调用；反过来，如果某天要同时支持两个修订版，就得自己补版本分支——这个成本是被明确接受的。
 
-## 2. 四个方法各自解决什么
+## 2. 一次会话的完整往返
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant H as 宿主
+  participant S as MCP Server
+  participant A as 业务 API
+  participant D as PostgreSQL
+
+  H->>S: initialize(protocolVersion, clientInfo)
+  Note over S: 协商版本 2025-06-18<br/>建会话档案 · 记 buildIdentity
+  S-->>H: protocolVersion + capabilities + serverInfo + instructions
+  H->>S: tools/list
+  Note over S: 注册表 → 有序视图<br/>校验 annotations 与 outputSchema 完备
+  S-->>H: tools[]（13 或 23 个，顺序固定）
+  H->>S: tools/call(name, arguments)
+  Note over S: 信封 passthrough → 参数 strict → 分发
+  S->>A: HTTP + bearer（身份由令牌绑定，不在参数里）
+  A->>D: 带 RLS 的查询
+  D-->>A: 行
+  A-->>S: JSON
+  Note over S: 响应按契约校验<br/>content + structuredContent
+  S-->>H: 结果，或 isError + code + correlationId
+```
+
+## 3. 四个方法各自解决什么
 
 ### `initialize`
 
@@ -60,7 +86,7 @@
 
 `ping` 返回空对象。所有通知（`id` 缺失的请求）直接忽略、不回复——包括 `notifications/initialized`。规范没有要求服务端对通知做回执，忽略是合规的；代价是当前不处理 `notifications/cancelled`，这一点在「故意不做」里说明。
 
-## 3. JSON-RPC 的错误面
+## 4. JSON-RPC 的错误面
 
 | 场景           | 返回                           | 说明                                        |
 | -------------- | ------------------------------ | ------------------------------------------- |
@@ -82,7 +108,7 @@
 
 最后一行是刻意的：任意异常的 message 可能带出文件路径或内部标识，直接回给宿主等于把它们写进对话记录。
 
-## 4. stdio 的五个决定
+## 5. stdio 的五个决定
 
 `stdio.ts` 只有 102 行，但每个决定都对应一类线上事故：
 
@@ -92,13 +118,13 @@
 4. **诊断走 stderr**：`onError` 只拿到异常，协议流里只有 JSON-RPC 消息，不会因为一行日志破坏解析。
 5. **响应可 await**：`respond` 返回 Promise，stdout 背压时等待 `drain`，避免写入乱序。
 
-## 5. 元数据不是抄出来的
+## 6. 元数据不是抄出来的
 
 - `annotations` 覆盖全部工具，`readOnlyHint` 与「入参是否同时必填 `requestId` + `expectedVersion`」双向断言——受治理写不可能被标成只读。
 - `outputSchema` 有 25 个，直接取自 client 校验响应用的同一批 Zod schema（`z.toJSONSchema`），所以 `structuredContent` 与声明同构是构造出来的。三个聚合工具（`workspace.resume`、`work.context`、`evidence.bundle`）刻意不声明：它们是多个 payload 的拼装，写一个猜出来的 schema 只会得到一份会漂移的契约。
 - `project.next_action` 相反，输出是本服务自建对象，于是定义显式 schema 并在返回前 `parse`，让 `classification` 不可能出现 `PROPOSAL` 以外的值。
 
-## 6. 故意不做
+## 7. 故意不做
 
 | 不做                              | 理由                                                                                                      |
 | --------------------------------- | --------------------------------------------------------------------------------------------------------- |
@@ -110,7 +136,7 @@
 | MCP 2026-07-28 无状态协议         | 主流宿主仍是 opt-in；现在实现等于维护两套逻辑                                                             |
 | 压缩 inputSchema                  | 6 个写工具共享同一套 governed envelope，重复是必然；用 `$ref` 省几 KB，赌所有客户端正确解析跨 schema 引用 |
 
-## 7. 怎么证明它是对的
+## 8. 怎么证明它是对的
 
 协议实现最怕"看起来对"。这里的做法是让每条不变量都有可执行的证据：
 
@@ -119,7 +145,7 @@
 - `tool-contract.test.ts` 双向比对声明与实现，并检查 `annotations` 与入参契约是否一致。
 - 变异验证：删掉错误脱敏、忽略宿主档案、让视图返回副本而不共享实例——每一次都应有测试变红；没有变红的守卫等于没有守卫。
 
-## 8. 读代码的顺序
+## 9. 读代码的顺序
 
 1. `endpoint-policy.ts`（67 行）：允许连哪个 API，为什么。
 2. `client.ts`（386 行）：三类错误的边界，响应如何按契约校验。
