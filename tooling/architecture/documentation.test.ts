@@ -473,4 +473,26 @@ describe("documented commands exist", () => {
       `.env.example 缺少这些被代码读取的变量：${undocumented.join(", ")}`,
     ).toEqual([]);
   });
+
+  it("does not point readers at scripts that do not exist", async () => {
+    // The MCP README used to name three installer scripts that were never
+    // committed; a reader following it would fail on the first command.
+    const files = (
+      await Promise.all(documentationRoots.map((root) => collectFiles(root)))
+    ).flat();
+    const missing: string[] = [];
+    for (const file of files) {
+      const text = await readFile(file, "utf8");
+      for (const match of text.matchAll(/`(scripts\/[A-Za-z0-9_./-]+)`/g)) {
+        const target = match[1] as string;
+        if (!existsSync(join(repositoryRoot, target)))
+          missing.push(
+            `${relative(repositoryRoot, file).split(sep).join("/")} 引用了不存在的 ${target}`,
+          );
+      }
+    }
+    expect(missing, `文档引用了不存在的脚本：\n${missing.join("\n")}`).toEqual(
+      [],
+    );
+  });
 });

@@ -12,20 +12,48 @@
 
 调用参数不接受 tenant、subject、role、scope 或 project allowlist。多身份 JSON 只放在本机/密钥管理环境变量中，不写入仓库配置。
 
-## WorkBuddy 用户级安装与密钥轮换
+## 接入客户端
 
-WorkBuddy 5.3.14 的本机实测行为是不展开 MCP `env` 中的 `${VAR}`，也不能依赖已运行进程重新继承 Windows 用户环境变量。因此仓库根 `.mcp.json` 只是禁用、无密钥模板；可运行配置由 `scripts/workbuddy/install-global-mcp.ps1` 写入当前用户的 `~/.workbuddy/mcp.json`。
+MCP 走 stdio：客户端启动 `node dist/server.js`，通过标准输入输出通信，不监听端口。先构建一次：
 
-安装器从 Windows 用户级 `DINGJIANG_MCP_API_TOKEN` 读取值，只在上述用户级本地配置写入 literal token。它不向 stdout 输出 token，不把 token 写入仓库或 evidence；每次安装保留的 rollback bundle 只包含旧运行时文件和脱敏后的 dingjiang 配置，恢复时重新读取当前用户级 token。
+```bash
+pnpm --filter @dingjiang/mcp build
+```
 
-轮换步骤：
+每个客户端各配一条 server 条目。形状是 MCP 标准的 stdio 配置，把路径换成你的仓库绝对路径：
 
-1. 退出 WorkBuddy 后运行 `scripts/workbuddy/rotate-local-secrets.ps1`。脚本在内存生成新 Dingjiang token，同步更新项目 `.env`、Windows 用户环境和用户级 `~/.workbuddy/mcp.json`，并原位脱敏 WorkBuddy 文本历史中的旧 Dingjiang token 与当前飞书 App Secret；不制作明文备份、不输出密钥值。
-2. 重启本地 Dingjiang API，使服务端身份配置读取新 token。
-3. 重启 WorkBuddy/新建会话，运行 `scripts/workbuddy/verify-global-mcp.ps1`，确认版本、build identity、13 个默认工具和真实只读调用。
-4. 旧 rollback bundle 不保存旧 token；如需回滚，运行 bundle 内 `restore-global-mcp.ps1`，它会注入轮换后的当前 token。
+```json
+{
+  "mcpServers": {
+    "dingjiang": {
+      "command": "node",
+      "args": ["/absolute/path/to/services/dingjiang-mcp/dist/server.js"],
+      "env": {
+        "DINGJIANG_API_BASE_URL": "http://127.0.0.1:3001/api",
+        "DINGJIANG_MCP_API_TOKEN": "<与 API 进程相同的令牌>"
+      }
+    }
+  }
+}
+```
 
-飞书 App Secret 的平台轮换是独立外部操作。上述本地脚本只清理 WorkBuddy 历史痕迹，不会重置开放平台凭据、修改飞书 Schema 或发送飞书消息。
+工具面是**进程级**的，所以：
+
+- 认命名空间工具名（`work.context`、`evidence.bundle`）的客户端：按上面的配置，得到 business 面 13 个工具。
+- 只认扁平工具名（`get_project_context`、`list_evidence`）的客户端：在 `env` 里加 `"DINGJIANG_MCP_TOOL_SURFACE": "compatibility"`，该进程给 23 个工具。
+- 两类都要用就配两条条目、各起一个进程；令牌可以复用，工具面互不影响。
+
+各客户端的配置文件位置与字段名以其官方文档为准；上面是 MCP 标准的 stdio 条目形状，字段为 `command` / `args` / `env`。
+
+**WorkBuddy 5.3.14 的实测差异**：它不展开 `env` 里的 `${VAR}`，也不会让已运行进程重新继承 Windows 用户环境变量。因此令牌要直接写进当前用户的 `~/.workbuddy/mcp.json`（明文，仅本机，不要提交）。改完配置要新建会话——stdio 进程随会话启动，旧进程读不到新值。
+
+## 密钥与轮换
+
+- 令牌只放两处：API 进程与 MCP 进程的环境变量，两边必须一致；MCP 进程的令牌不进入工具参数，AI 也无法读取。
+- 不提交 `.env`，不把令牌写进仓库内的客户端配置，不贴进对话、截图或日志。
+- 轮换顺序：改两处令牌 → 重启 API → 客户端新建会话。stdio 进程在会话结束时退出，旧值不会残留。
+- 本机 `~/.workbuddy/mcp.json` 保存的是明文令牌，属于运维待办：轮换后应视旧值为已泄露。
+- 飞书 App Secret 的轮换是开放平台上的独立操作，与这里的 Dingjiang 令牌无关。
 
 ## 传输层与客户端健壮性
 
