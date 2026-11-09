@@ -90,6 +90,23 @@ describe("MCP tool contract drift guard", () => {
     for (const tool of [...dingjiangTools, ...dingjiangCompatibilityTools])
       expect(dispatchedToolNames.has(tool.name)).toBe(true);
   });
+
+  it("resolves shared tools from one registry entry, not from copies", () => {
+    for (const name of [
+      "work.execute",
+      "workpaper.propose",
+      "material.create",
+      "evidence.propose",
+    ]) {
+      const business = dingjiangTools.find((tool) => tool.name === name);
+      const compatibility = dingjiangCompatibilityTools.find(
+        (tool) => tool.name === name,
+      );
+      expect(business).toBeDefined();
+      expect(compatibility).toBe(business);
+    }
+    expect(allTools).toHaveLength(28);
+  });
 });
 
 describe("MCP tool governance annotations", () => {
@@ -271,5 +288,44 @@ describe("MCP protocol surface", () => {
     expect(result.instructions).toContain("PROPOSAL");
     expect(result.instructions).toContain("requestId");
     expect(result.instructions).toContain("OWNER");
+  });
+
+  it("serves two hosts with different surfaces from one process", async () => {
+    const previous = process.env.DINGJIANG_MCP_TOOL_SURFACE;
+    process.env.DINGJIANG_MCP_TOOL_SURFACE = "compatibility";
+    try {
+      const listFor = async (clientInfo: unknown) => {
+        const handler = createMcpHandler(stubClient());
+        await handler({
+          jsonrpc: "2.0",
+          id: "init",
+          method: "initialize",
+          params: { protocolVersion: latestProtocolVersion, clientInfo },
+        });
+        const response = await handler({
+          jsonrpc: "2.0",
+          id: "list",
+          method: "tools/list",
+        });
+        return (response as { result: { tools: ToolDescriptor[] } }).result
+          .tools;
+      };
+
+      const business = await listFor({
+        name: "WorkBuddy",
+        version: "5.3.14",
+      });
+      const compatibility = await listFor({
+        name: "UnrelatedHost",
+        version: "1.0",
+      });
+      // The old implementation read a process-wide env var, so one process
+      // could only ever serve one of these two surfaces.
+      expect(business).toHaveLength(13);
+      expect(compatibility).toHaveLength(23);
+    } finally {
+      if (previous === undefined) delete process.env.DINGJIANG_MCP_TOOL_SURFACE;
+      else process.env.DINGJIANG_MCP_TOOL_SURFACE = previous;
+    }
   });
 });

@@ -44,6 +44,18 @@ Integration client 将失败分为三类，避免把服务端问题误报为调�
 
 `DINGJIANG_MCP_TIMEOUT_MS` 配置请求超时（默认 10000，范围 100–120000）。超时错误仍要求复用原 requestId / correlationId 核对，不得改 requestId 重试。`DINGJIANG_API_BASE_URL` 的校验结果按原始值缓存，环境变量变化时立即重新校验；loopback HTTP 覆盖完整 `127.0.0.0/8`，并拒绝 `127.0.0.1.evil.com` 这类伪装主机。
 
+## 多宿主适配（会话级）
+
+不同 AI 宿主对协议版本、工具命名和返回说明书的支持不一样。差异只在握手时收敛一次，不进分发逻辑：
+
+- `src/host-profiles.ts` 是宿主能力表：按 `initialize.params.clientInfo.name / version` 匹配，新增宿主只需加一行，可覆盖工具面与是否支持结构化输出。
+- `src/session-profile.ts` 由握手参数生成会话档案（协议版本、工具面、是否下发 `outputSchema`），保存在 `createMcpHandler` 的闭包里；`tools/list` 按**本次会话**的档案组装，所以一个进程可同时服务不同宿主。
+- 未识别的宿主回落到部署级 `DINGJIANG_MCP_TOOL_SURFACE`，既有配置不会失效；未握手就 `tools/list` 时使用默认档案。
+
+工具定义只有一份：`protocol.ts` 的 `toolRegistry` 收录全部 28 个工具，两套工具面只是它上面的有序名单，共享同一批 `ToolDescriptor` 实例。`dispatchedToolNames` 仍独立手写，供 `tool-contract.test.ts` 双向比对声明与实现——它不能由注册表自动生成，否则守卫会空转。
+
+**红线**：宿主能力表只影响「广告哪些元数据」，绝不改变租户、角色、scope、`requestId` 幂等与 `expectedVersion` 校验；这些统一在 API 侧执行，工具参数也不接受身份字段。
+
 ## 工具元数据：让治理边界对宿主可见
 
 `tools/list` 不只是参数表。宿主用它决定调用前是否弹确认、结果能否当不可信外部内容、界面上显示什么名字。而协议的默认值对治理型服务最不利：什么都不声明时 `readOnlyHint` 为 false、`destructiveHint` 为 true、`openWorldHint` 为 true——22 个只读工具在宿主眼里和写入口没有区别，宿主只能选择对每次读取都弹框，或者干脆忽略提示。

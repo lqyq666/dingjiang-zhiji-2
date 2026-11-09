@@ -40,38 +40,12 @@ import {
   integrationEventsSchema,
 } from "./client";
 import type { DingjiangIntegrationClient } from "./client";
+import { createSessionProfile, type SessionProfile } from "./session-profile";
 
-export const latestProtocolVersion = "2025-06-18";
-
-/**
- * Revision-gated tool features.
- *
- * Advertising the newest fields to a client that negotiated an older revision
- * is not a favour: a strict client rejects a tool descriptor it cannot
- * validate, and a lenient one silently accepts a shape it will never check.
- * The surface is therefore assembled per negotiated revision instead of
- * assuming every client speaks the newest one.
- */
-const protocolRevisions: Record<string, { structuredToolOutput: boolean }> = {
-  "2025-06-18": { structuredToolOutput: true },
-  "2025-03-26": { structuredToolOutput: false },
-};
-
-export const supportedProtocolVersions: readonly string[] =
-  Object.keys(protocolRevisions);
-
-const structuredToolOutputFor = (revision: string): boolean =>
-  protocolRevisions[revision]?.structuredToolOutput ?? true;
-
-/**
- * Echo the revision the caller asked for when it is supported, otherwise
- * answer with the newest one we speak. `Object.hasOwn` rather than `in`, so a
- * probe such as `toString` or `__proto__` cannot masquerade as a revision.
- */
-const negotiateProtocolVersion = (requested: unknown): string =>
-  typeof requested === "string" && Object.hasOwn(protocolRevisions, requested)
-    ? requested
-    : latestProtocolVersion;
+export {
+  latestProtocolVersion,
+  supportedProtocolVersions,
+} from "./session-profile";
 
 /**
  * Reported in `serverInfo`. Defined once and used by the handler, so the
@@ -434,7 +408,7 @@ const operationTools: ToolSeed[] = [
   },
 ];
 
-const compatibilityTools = finalize([
+const compatibilitySeeds: ToolSeed[] = [
   ...operationTools,
   {
     name: "list_projects",
@@ -867,16 +841,9 @@ const compatibilityTools = finalize([
       additionalProperties: false,
     },
   },
-]);
+];
 
-const existingTool = (name: string) => {
-  const tool = compatibilityTools.find((candidate) => candidate.name === name);
-  if (!tool) throw new Error(`Missing compatibility tool: ${name}`);
-  return tool;
-};
-
-const businessTools = finalize([
-  ...operationTools,
+const businessOnlySeeds: ToolSeed[] = [
   {
     name: "workspace.resume",
     description:
@@ -936,10 +903,43 @@ const businessTools = finalize([
       additionalProperties: false,
     },
   },
-  existingTool("workpaper.propose"),
-  existingTool("material.create"),
-  existingTool("evidence.propose"),
-]);
+];
+
+/**
+ * One definition per tool. Both surfaces below are ordered name lists over this
+ * registry rather than copies of the schemas, so a tool shared by the two
+ * surfaces cannot drift between them.
+ */
+const toolRegistry = new Map<string, ToolDescriptor>(
+  finalize([...compatibilitySeeds, ...businessOnlySeeds]).map((tool) => [
+    tool.name,
+    tool,
+  ]),
+);
+
+const toolFromRegistry = (name: string): ToolDescriptor => {
+  const tool = toolRegistry.get(name);
+  if (!tool) throw new Error(`Missing tool in registry: ${name}`);
+  return tool;
+};
+
+const businessToolNames: readonly string[] = [
+  ...operationTools.map((tool) => tool.name),
+  ...businessOnlySeeds.map((tool) => tool.name),
+  "workpaper.propose",
+  "material.create",
+  "evidence.propose",
+];
+
+const compatibilityToolNames: readonly string[] = compatibilitySeeds.map(
+  (tool) => tool.name,
+);
+
+/** Exported views share the very same ToolDescriptor instances. */
+export const dingjiangTools: ToolDescriptor[] =
+  businessToolNames.map(toolFromRegistry);
+export const dingjiangCompatibilityTools: ToolDescriptor[] =
+  compatibilityToolNames.map(toolFromRegistry);
 
 /**
  * Tool list for the revision this session negotiated.
@@ -948,12 +948,12 @@ const businessTools = finalize([
  * recommends a deterministic order so client-side prompt caching can reuse the
  * tool block across turns instead of re-hashing a reshuffled list.
  */
-const toolSurface = (structuredToolOutput: boolean): ToolDescriptor[] => {
+const toolSurface = (profile: SessionProfile): ToolDescriptor[] => {
   const tools =
-    process.env.DINGJIANG_MCP_TOOL_SURFACE === "compatibility"
-      ? compatibilityTools
-      : businessTools;
-  if (structuredToolOutput) return [...tools];
+    profile.toolSurface === "compatibility"
+      ? dingjiangCompatibilityTools
+      : dingjiangTools;
+  if (profile.structuredToolOutput) return [...tools];
   // Older revisions have no `outputSchema`. Emitting the field anyway leaves
   // the client validating against a contract its revision cannot express.
   return tools.map((tool) => ({
@@ -1388,7 +1388,7 @@ export const createMcpHandler = (
     current: () => "development",
   },
 ) => {
-  let negotiatedProtocolVersion = latestProtocolVersion;
+  let sessionProfile = createSessionProfile(undefined);
 
   return async (
     request: JsonRpcRequest,
@@ -1413,15 +1413,12 @@ export const createMcpHandler = (
           },
         };
       if (request.method === "initialize") {
-        negotiatedProtocolVersion = negotiateProtocolVersion(
-          (request.params as { protocolVersion?: unknown } | undefined)
-            ?.protocolVersion,
-        );
+        sessionProfile = createSessionProfile(request.params);
         return {
           jsonrpc: "2.0",
           id,
           result: {
-            protocolVersion: negotiatedProtocolVersion,
+            protocolVersion: sessionProfile.revision,
             capabilities: { tools: { listChanged: false } },
             serverInfo: {
               name: "dingjiang-mcp",
@@ -1437,11 +1434,7 @@ export const createMcpHandler = (
         return {
           jsonrpc: "2.0",
           id,
-          result: {
-            tools: toolSurface(
-              structuredToolOutputFor(negotiatedProtocolVersion),
-            ),
-          },
+          result: { tools: toolSurface(sessionProfile) },
         };
       if (request.method === "tools/call")
         return {
@@ -1468,5 +1461,4 @@ export const createMcpHandler = (
   };
 };
 
-export const dingjiangTools = businessTools;
-export const dingjiangCompatibilityTools = compatibilityTools;
+// Tool views are exported beside the single registry above.
