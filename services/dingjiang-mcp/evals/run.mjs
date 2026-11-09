@@ -359,7 +359,7 @@ const runSessionMatrixCheck = async () => {
     { id: "default", env: undefined, surface: "business" },
     { id: "compat-env", env: "compatibility", surface: "compatibility" },
   ];
-  const revisions = protocol.supportedProtocolVersions;
+  const revisions = [protocol.latestProtocolVersion];
   // Protocol cases drive their own handshake; replaying them under a forced
   // session would only re-test the harness. Everything else reaches the
   // dispatcher and must hold in every session.
@@ -395,12 +395,8 @@ const runSessionMatrixCheck = async () => {
         const withOutputSchema = tools.filter(
           (tool) => tool.outputSchema,
         ).length;
-        if (protocol.structuredToolOutputFor(revision)) {
-          if (withOutputSchema === 0)
-            failures.push("该版本应下发 outputSchema 却一个都没有");
-        } else if (withOutputSchema !== 0) {
-          failures.push(`旧版本仍下发 ${withOutputSchema} 个 outputSchema`);
-        }
+        if (withOutputSchema === 0)
+          failures.push("工具面一个 outputSchema 都没有下发");
 
         for (const tool of tools) {
           if (typeof tool.annotations?.readOnlyHint !== "boolean")
@@ -612,7 +608,7 @@ function renderReport(summary, results) {
     "",
     "## 会话档案矩阵",
     "",
-    `协议版本 × 工具面共 ${summary.matrix.total} 组，累计回归 ${summary.matrix.caseRuns} 次用例。降级只允许减少元数据，不允许减少治理标注、幂等校验或参数拦截。`,
+    `工具面共 ${summary.matrix.total} 组，累计回归 ${summary.matrix.caseRuns} 次用例。两套工具面必须给出同一套治理标注、幂等校验与参数拦截。`,
     "",
     "| 组合 | 结果 | 证据 |",
     "| --- | --- | --- |",

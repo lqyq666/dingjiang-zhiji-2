@@ -8,7 +8,6 @@ import {
   latestProtocolVersion,
   outputContractToolCount,
   serverVersion,
-  supportedProtocolVersions,
   type IntegrationClient,
   type ToolDescriptor,
 } from "./protocol";
@@ -214,40 +213,7 @@ describe("MCP protocol surface", () => {
     );
   });
 
-  it("negotiates the revision the caller asked for and gates fields by it", async () => {
-    expect(supportedProtocolVersions).toContain(latestProtocolVersion);
-    const legacy = supportedProtocolVersions.find(
-      (revision) => revision !== latestProtocolVersion,
-    );
-    expect(legacy).toBeDefined();
-
-    const handler = createMcpHandler(stubClient());
-    const initialize = await handler({
-      jsonrpc: "2.0",
-      id: "init",
-      method: "initialize",
-      params: { protocolVersion: legacy },
-    });
-    const negotiated = (initialize as { result: { protocolVersion: string } })
-      .result.protocolVersion;
-    expect(negotiated).toBe(legacy);
-
-    const listed = await handler({
-      jsonrpc: "2.0",
-      id: "list",
-      method: "tools/list",
-    });
-    const tools = (listed as { result: { tools: ToolDescriptor[] } }).result
-      .tools;
-    // A revision without `outputSchema` must not receive one: the client would
-    // validate against a contract its own revision cannot express.
-    expect(tools.every((tool) => tool.outputSchema === undefined)).toBe(true);
-    expect(
-      tools.every((tool) => tool.annotations?.readOnlyHint !== undefined),
-    ).toBe(true);
-  });
-
-  it("answers with the newest revision for an unknown or hostile request", async () => {
+  it("answers with its only revision even for a hostile probe", async () => {
     for (const protocolVersion of [
       "1999-01-01",
       "toString",

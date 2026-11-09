@@ -303,11 +303,10 @@ describe("dingjiang-mcp protocol", () => {
       jsonrpc: "2.0",
       id: "init-2",
       method: "initialize",
-      params: { protocolVersion: "2025-03-26" },
+      params: { protocolVersion: "1999-01-01" },
     });
     expect(revisionOf(first)).toBe(latestProtocolVersion);
-    // Re-handshaking must not demote a session that already received the
-    // newer contract.
+    // A second handshake must not change what the session was promised.
     expect(revisionOf(second)).toBe(latestProtocolVersion);
 
     const listed = await handler({

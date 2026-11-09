@@ -42,11 +42,7 @@ import {
 import type { DingjiangIntegrationClient } from "./client";
 import { createSessionProfile, type SessionProfile } from "./session-profile";
 
-export {
-  latestProtocolVersion,
-  structuredToolOutputFor,
-  supportedProtocolVersions,
-} from "./session-profile";
+export { latestProtocolVersion } from "./session-profile";
 
 /**
  * Reported in `serverInfo`. Defined once and used by the handler, so the
@@ -943,27 +939,16 @@ export const dingjiangCompatibilityTools: ToolDescriptor[] =
   compatibilityToolNames.map(toolFromRegistry);
 
 /**
- * Tool list for the revision this session negotiated.
+ * Tool list for the surface this deployment serves.
  *
  * The order is the declaration order, not a dictionary walk: the protocol
  * recommends a deterministic order so client-side prompt caching can reuse the
  * tool block across turns instead of re-hashing a reshuffled list.
  */
-const toolSurface = (profile: SessionProfile): ToolDescriptor[] => {
-  const tools =
-    profile.toolSurface === "compatibility"
-      ? dingjiangCompatibilityTools
-      : dingjiangTools;
-  if (profile.structuredToolOutput) return [...tools];
-  // Older revisions have no `outputSchema`. Emitting the field anyway leaves
-  // the client validating against a contract its revision cannot express.
-  return tools.map((tool) => ({
-    name: tool.name,
-    description: tool.description,
-    inputSchema: tool.inputSchema,
-    annotations: tool.annotations,
-  }));
-};
+const toolSurface = (profile: SessionProfile): ToolDescriptor[] =>
+  profile.toolSurface === "compatibility"
+    ? dingjiangCompatibilityTools
+    : dingjiangTools;
 
 /**
  * A refusal the caller can act on: the request was well formed and the server
@@ -1420,7 +1405,7 @@ export const createMcpHandler = (
     current: () => "development",
   },
 ) => {
-  let sessionProfile = createSessionProfile(undefined);
+  let sessionProfile = createSessionProfile();
   let handshaken = false;
 
   return async (
@@ -1450,7 +1435,7 @@ export const createMcpHandler = (
         // negotiation instead of silently re-scoping the session, which would
         // change what an earlier tools/list already promised.
         if (!handshaken) {
-          sessionProfile = createSessionProfile(request.params);
+          sessionProfile = createSessionProfile();
           handshaken = true;
         }
         return {
