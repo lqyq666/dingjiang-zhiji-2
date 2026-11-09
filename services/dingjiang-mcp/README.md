@@ -1,5 +1,7 @@
 # Dingjiang MCP
 
+实现说明（为什么零依赖、四个方法怎么落地、哪些故意不做）见 [PROTOCOL.md](PROTOCOL.md)。
+
 本地 stdio MCP 只调用 loopback `/api/integration/*`，不访问 PostgreSQL、业务文件或厂商 SDK。默认提供 13 个受限业务入口：7 个读取入口、6 个受治理写入口。Evidence Proposal 仍非 FACT；人工确认动作须由对应身份在 WorkBuddy 明确发起。Web 只读展示事实、过程和经营数据。
 
 ## 启动前提
