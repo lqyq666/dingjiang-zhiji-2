@@ -56,6 +56,8 @@ Integration client 将失败分为三类，避免把服务端问题误报为调�
 
 **红线**：宿主能力表只影响「广告哪些元数据」，绝不改变租户、角色、scope、`requestId` 幂等与 `expectedVersion` 校验；这些统一在 API 侧执行，工具参数也不接受身份字段。
 
+传输边界（`createMcpHandler` 是与传输无关的纯函数，新增传输只需新的 dispatcher）与已验证 / 未验证的宿主组合见[宿主支持矩阵](../../docs/architecture/mcp-host-matrix.md)。契约评测会把 40 个用例在 12 组会话组合下各跑一遍，确认降级没有顺手把权限一起降掉。
+
 ## 工具元数据：让治理边界对宿主可见
 
 `tools/list` 不只是参数表。宿主用它决定调用前是否弹确认、结果能否当不可信外部内容、界面上显示什么名字。而协议的默认值对治理型服务最不利：什么都不声明时 `readOnlyHint` 为 false、`destructiveHint` 为 true、`openWorldHint` 为 true——22 个只读工具在宿主眼里和写入口没有区别，宿主只能选择对每次读取都弹框，或者干脆忽略提示。

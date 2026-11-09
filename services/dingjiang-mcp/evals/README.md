@@ -29,6 +29,7 @@ pnpm --filter @dingjiang/mcp exec node evals/run.mjs --json
 | 传输故障收敛 | 超时映射为 `INTEGRATION_TIMEOUT`，不泄露授权头，后续调用仍成功                                                       | 1/1      |
 | 缺失降级     | 可选子资源 `NOT_FOUND` → `null` 且聚合成功；`FORBIDDEN` 原样失败                                                     | 2/2      |
 | 协议契约     | `initialize` / `ping` / `tools/list` / 未知方法 / notification                                                       | 6/6      |
+| 会话档案矩阵 | 协议版本 × 宿主识别 × 工具面共 12 组，每组重跑 40 个契约用例；降级只减元数据，不减治理标注与拦截                     | 12/12    |
 
 「元数据完备」这一项从 wire 层读取：测试已经断言导出数组上的 annotations，这里再对真实 JSON-RPC 响应断言一次，因为工具面是按协商版本组装的——如果组装逻辑出错，只读模块的测试看不出来。判定「写入口」不靠工具名清单，而是看入参契约是否同时必填 `requestId` 与 `expectedVersion`：这是受治理命令的唯一结构特征，据此可以独立校验标注有没有说谎。
 

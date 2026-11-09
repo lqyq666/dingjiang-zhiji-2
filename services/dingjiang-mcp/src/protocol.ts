@@ -44,6 +44,7 @@ import { createSessionProfile, type SessionProfile } from "./session-profile";
 
 export {
   latestProtocolVersion,
+  structuredToolOutputFor,
   supportedProtocolVersions,
 } from "./session-profile";
 

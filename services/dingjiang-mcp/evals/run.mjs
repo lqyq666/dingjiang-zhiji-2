@@ -54,15 +54,20 @@ const createClient = (overrides = {}) => {
 
 const identity = { startup: "eval", current: () => "eval" };
 
-const withEnv = (env, run) => {
+const withEnv = async (env, run) => {
   if (!env) return run();
   const previous = {};
   for (const key of Object.keys(env)) {
     previous[key] = process.env[key];
-    process.env[key] = env[key];
+    // `undefined` clears a variable, which is how a matrix scenario asks for
+    // the default surface without inheriting the caller's environment.
+    if (env[key] === undefined) delete process.env[key];
+    else process.env[key] = env[key];
   }
   try {
-    return run();
+    // Await inside the block: returning the promise directly would run the
+    // finally (and restore the environment) before an async callback finishes.
+    return await run();
   } finally {
     for (const key of Object.keys(env)) {
       if (previous[key] === undefined) delete process.env[key];
@@ -97,7 +102,7 @@ const invokeTool = async (handler, name, args) => {
 const ok = (detail) => ({ pass: true, detail });
 const fail = (detail) => ({ pass: false, detail });
 
-const runCase = async (testCase) =>
+const runCase = async (testCase, session) =>
   withEnv(testCase.env, async () => {
     if (testCase.kind === "protocol") return runProtocolCase(testCase);
 
@@ -130,6 +135,13 @@ const runCase = async (testCase) =>
     }
     const { client, calls } = createClient(overrides);
     const handler = protocol.createMcpHandler(client, identity);
+    if (session)
+      await handler({
+        jsonrpc: "2.0",
+        id: "eval-matrix-initialize",
+        method: "initialize",
+        params: session,
+      });
     const result = await invokeTool(handler, testCase.tool, testCase.arguments);
 
     if (testCase.kind === "happy") {
@@ -335,6 +347,138 @@ const runMetadataCheck = async () => {
   };
 };
 
+/**
+ * A session may advertise fewer fields (an old revision has no outputSchema),
+ * but it must never advertise weaker governance or let a hostile argument
+ * through. The same contract cases therefore run under every combination of
+ * negotiated revision, recognised host and fallback surface.
+ */
+const runSessionMatrixCheck = async () => {
+  const latest = protocol.latestProtocolVersion;
+  const workbuddy = { name: "WorkBuddy", version: "5.3.14" };
+  const unknown = { name: "UnrelatedHost", version: "1.0" };
+  const scenarios = [
+    {
+      id: "default",
+      env: undefined,
+      clientInfo: undefined,
+      surface: "business",
+    },
+    {
+      id: "default-compat-env",
+      env: "compatibility",
+      clientInfo: undefined,
+      surface: "compatibility",
+    },
+    {
+      id: "workbuddy",
+      env: undefined,
+      clientInfo: workbuddy,
+      surface: "business",
+    },
+    {
+      id: "workbuddy-compat-env",
+      env: "compatibility",
+      clientInfo: workbuddy,
+      surface: "business",
+    },
+    {
+      id: "unknown-host",
+      env: undefined,
+      clientInfo: unknown,
+      surface: "business",
+    },
+    {
+      id: "unknown-host-compat-env",
+      env: "compatibility",
+      clientInfo: unknown,
+      surface: "compatibility",
+    },
+  ];
+  const revisions = protocol.supportedProtocolVersions;
+  // Protocol cases drive their own handshake; replaying them under a forced
+  // session would only re-test the harness. Everything else reaches the
+  // dispatcher and must hold in every session.
+  const contractCases = cases.filter(
+    (testCase) => testCase.kind !== "protocol",
+  );
+
+  const results = [];
+  let caseRuns = 0;
+  for (const scenario of scenarios) {
+    for (const revision of revisions) {
+      const session = {
+        protocolVersion: revision,
+        ...(scenario.clientInfo ? { clientInfo: scenario.clientInfo } : {}),
+      };
+      const failures = [];
+      await withEnv({ DINGJIANG_MCP_TOOL_SURFACE: scenario.env }, async () => {
+        const { client } = createClient();
+        const handler = protocol.createMcpHandler(client, identity);
+        await handler({
+          jsonrpc: "2.0",
+          id: "matrix-initialize",
+          method: "initialize",
+          params: session,
+        });
+        const listed = await handler({
+          jsonrpc: "2.0",
+          id: "matrix-list",
+          method: "tools/list",
+        });
+        const tools = listed?.result?.tools ?? [];
+        const expected = scenario.surface === "business" ? 13 : 23;
+        if (tools.length !== expected)
+          failures.push(`工具面 ${tools.length}，应为 ${expected}`);
+
+        const withOutputSchema = tools.filter(
+          (tool) => tool.outputSchema,
+        ).length;
+        if (protocol.structuredToolOutputFor(revision)) {
+          if (withOutputSchema === 0)
+            failures.push("该版本应下发 outputSchema 却一个都没有");
+        } else if (withOutputSchema !== 0) {
+          failures.push(`旧版本仍下发 ${withOutputSchema} 个 outputSchema`);
+        }
+
+        for (const tool of tools) {
+          if (typeof tool.annotations?.readOnlyHint !== "boolean")
+            failures.push(`${tool.name} 缺治理标注`);
+          const required = tool.inputSchema?.required;
+          if (
+            Array.isArray(required) &&
+            required.includes("requestId") &&
+            !required.includes("expectedVersion")
+          )
+            failures.push(`${tool.name} 丢了 expectedVersion 校验`);
+        }
+
+        for (const testCase of contractCases) {
+          caseRuns += 1;
+          const outcome = await runCase(testCase, session);
+          if (!outcome.pass) failures.push(`${testCase.id}: ${outcome.detail}`);
+        }
+      });
+      results.push({
+        id: `${scenario.id}@${revision}`,
+        pass: failures.length === 0,
+        detail:
+          failures.length === 0
+            ? `${scenario.surface} 面 · ${contractCases.length} 用例回归 · 降级只影响元数据`
+            : failures.slice(0, 3).join("；"),
+      });
+    }
+  }
+
+  return {
+    total: results.length,
+    passed: results.filter((item) => item.pass).length,
+    caseRuns,
+    results,
+    pass: results.length > 0 && results.every((item) => item.pass),
+  };
+};
+
 const run = async () => {
   const results = [];
   for (const testCase of cases)
@@ -346,6 +490,7 @@ const run = async () => {
 
   const drift = await runDriftCheck();
   const metadata = await runMetadataCheck();
+  const matrix = await runSessionMatrixCheck();
   const group = (kind) => results.filter((item) => item.kind === kind);
   const rate = (items) =>
     items.length === 0
@@ -357,17 +502,22 @@ const run = async () => {
     node: process.version,
     drift,
     metadata,
+    matrix,
     happy: tally(group("happy")),
     guard: tally(group("guard")),
     governance: tally(group("governance")),
     recovery: tally(group("recovery")),
     absent: tally(group("absent")),
     protocol: tally(group("protocol")),
-    failures: results.filter((item) => !item.pass),
+    failures: [
+      ...results.filter((item) => !item.pass),
+      ...matrix.results.filter((item) => !item.pass),
+    ],
   };
   summary.ok =
     drift.pass &&
     metadata.pass &&
+    matrix.pass &&
     ["happy", "guard", "governance", "recovery", "absent", "protocol"].every(
       (kind) => rate(group(kind)) === 1,
     );
@@ -486,12 +636,26 @@ function renderReport(summary, results) {
       summary.protocol.total,
       "initialize/ping/tools.list/未知方法/notification",
     ),
+    invariant(
+      "会话档案组合下契约不降级",
+      summary.matrix.passed,
+      summary.matrix.total,
+      `${summary.matrix.caseRuns} 次用例回归：降级只减元数据，治理标注、幂等校验与拦截不变`,
+    ),
     "",
     "## 明细",
     "",
     "| 用例 | 结果 | 证据 |",
     "| --- | --- | --- |",
     ...results.map(line),
+    "",
+    "## 会话档案矩阵",
+    "",
+    `协议版本 × 宿主识别 × 工具面共 ${summary.matrix.total} 组，累计回归 ${summary.matrix.caseRuns} 次用例。降级只允许减少元数据，不允许减少治理标注、幂等校验或参数拦截。`,
+    "",
+    "| 组合 | 结果 | 证据 |",
+    "| --- | --- | --- |",
+    ...summary.matrix.results.map(line),
     "",
     "## 未覆盖",
     "",
