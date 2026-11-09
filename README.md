@@ -20,6 +20,67 @@
 
 > 表里的数量不是手写估值：`documentation.test.ts` 从迁移与工具注册表推导表数 / 迁移数 / 工具数，`api-surface.test.ts` 从控制器源码推导路由数，依赖图数字另有守卫核对。文档一旦与代码脱节，CI 会红。
 
+## 一个延期工单如何被闭环
+
+前面的速览讲「怎么造的」，这一节讲**为什么造**：把「订单延期」这类模糊问题，变成有证据、有阶段门、有人签字确认的交付项目（[系统总览 §1](docs/architecture/system-overview.md)）。产品立场写在 [PRODUCT.md](PRODUCT.md)：Web 是只读的记录与溯源表面，WorkBuddy 才是行动表面；AI 可以组装事实、提出候选原因、整理经验草稿，但**提案在被责任人明确决定之前不是事实**。
+
+种子库里的 `SO-202608128` 是这条链路的起点（[`vs01-db.ts`](apps/api/src/vs01-db.ts)）。七个阶段来自 [`work-stages.ts`](apps/api/src/work-stages.ts)，不是文档画出来的：
+
+| #   | 阶段（`workStageNames`）             | 谁推进                                 | AI 能做什么 / 不能做什么                  | 落点                                                                                                                          |
+| --- | ------------------------------------ | -------------------------------------- | ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| 0   | 工单确认 → 立项                      | 员工 `decideTask` → `createProject`    | 不参与                                    | `vs01_tasks` / `vs01_decisions` / `vs01_projects` / `vs01_project_phases`                                                     |
+| 1   | `PROJECT_SCOPING` 明确要解决的问题   | 员工确认事实                           | 只读引导分析，结论是 `PROPOSAL`           | `vs01_project_subtasks`；[`assistant/guided-analysis.ts`](apps/api/src/assistant/guided-analysis.ts)                          |
+| 2   | `BASELINE_FACTS` 核清事实            | 材料责任人核验、PMC 确认证据           | 可提议证据，不能确认事实                  | `material.create` → `material.verify` → `evidence.propose` → `evidence.confirm`                                               |
+| 3   | `ROOT_CAUSE_VALIDATION` 找到主要原因 | 员工写核验工作底稿并确认               | 候选推断恒为 `PROPOSAL`，不能替代本人结论 | `workpaper.propose`；[`workpapers/`](apps/api/src/workpapers/)                                                                |
+| 4   | `SOLUTION_APPROVAL` 定下解决方案     | **OWNER 人工批准**（外部审批门）       | 不能批准方案                              | `vs01_project_phases.gate_status`；`SOLUTION_APPROVAL` 的 OWNER 事项                                                          |
+| 5   | `EXECUTION_CONTROL` 落实解决措施     | 员工逐项完成并留依据                   | 可记录进展，不能代为确认完成              | `work.execute` / `updateSubtask`；`vs01_project_subtask_events`                                                               |
+| 6   | `RESULT_ACCEPTANCE` 确认实际结果     | 员工提交、审批结果                     | 不能确认经营结果                          | `vs01_result_validations`                                                                                                     |
+| 7   | `KNOWLEDGE_CAPTURE` 总结可复用做法   | 候选经验 → **专家人工批准** → 正式经验 | 可生成草稿，不能发布经验                  | `vs01_experience_candidates` → `vs01_formal_experiences`；[演示 12 步](docs/demo/vs17-experience-intelligence-demo-script.md) |
+
+```mermaid
+sequenceDiagram
+  autonumber
+  actor P as 员工 / PMC
+  participant A as WorkBuddy / MCP
+  participant K as 受治理命令内核
+  participant D as PostgreSQL（唯一事实源）
+  A->>K: work.context（只读 + scopes / projectIds）
+  K->>D: 按 tenant + project 读取
+  D-->>A: 带角色边界的工作上下文快照
+  A-->>P: PROPOSAL（候选原因 / 计划 / 经验草稿）
+  Note over A,D: 提案不落库、不推进阶段
+  P->>K: evidence.confirm / work.execute（人工确认）
+  K->>K: 角色校验 + requestId 幂等 + expectedVersion
+  K->>D: BEGIN → 写事实 + 不可变 SourceVersion + 审计 → COMMIT
+  K-->>P: 回执（同一事务内读回）
+```
+
+链路上的约束是可数的，不是口号：
+
+- 1 个延期工单 → 7 个工作阶段 → 2 道外部审批门（定下方案、总结做法）→ 1 份可复用正式经验；其余阶段由员工完成事实或确认结果推进（[`CONTEXT.md`](CONTEXT.md) 的 WorkStage 定义）。
+- 材料到证据要过 4 道受治理命令；每条事实定位到不可覆盖的 `SourceVersion`，错误不得原地覆盖。
+- MCP 契约评测 [46 个用例](services/dingjiang-mcp/evals/cases.json) 中，`governance` 7 个 + `guard` 6 个 = **13 个是拦截类**（越权字段注入、SQL / shell / URL / 路径注入、缺失或非法参数），另有 2 个 `absent` 降级用例。
+- 下面两段是评测夹具里**真实存在**的载荷，不是示意图：AI 侧的证据提议状态恒为 `PROPOSAL`；可选子资源越权时不会被降级成「查不到」，而是原样返回 `FORBIDDEN`。
+
+```json
+{
+  "version": 1,
+  "replayed": false,
+  "data": { "status": "PROPOSAL", "proposalId": "EVP-DEMO" }
+}
+```
+
+```json
+{
+  "absent": { "method": "getValidationWorkpaper", "code": "FORBIDDEN" },
+  "expect": { "errorCode": "FORBIDDEN" }
+}
+```
+
+> `SO-202608128`、`PRJ-DEMO`、`EVP-DEMO` 都是代码与夹具中的种子 / 示例标识，不代表任何真实客户、项目状态或生产数据。
+
+哪些能力是判断后**主动不做**的，见文末「明确不做的事」；「已知限制」写的是没做到或没覆盖，两者不是一回事。
+
 ## 核心边界
 
 - PostgreSQL 是唯一业务事实源，核心数据按租户和项目隔离。
@@ -207,19 +268,34 @@ MCP 工具面除参数 schema 外还声明 `annotations`（读写、破坏性、
 
 ## 延伸阅读
 
-| 文档                                               | 内容                                                               |
-| -------------------------------------------------- | ------------------------------------------------------------------ |
-| [CONTEXT.md](CONTEXT.md)                           | 领域词汇表：经营问题、咨询任务、工作步骤、执行事项、工作上下文快照 |
-| [PRODUCT.md](PRODUCT.md)                           | 产品定位、角色与业务目标                                           |
-| [DESIGN.md](DESIGN.md)                             | Web 端设计系统：OKLCH 色板、层级与排版规则                         |
-| [docs/architecture/](docs/architecture/)           | 系统全景、系统不变量、集成就绪度与各子系统边界                     |
-| [docs/api-surface.md](docs/api-surface.md)         | 全部 85 条 HTTP 路由（自动生成，带防漂移守卫）                     |
-| [docs/research/](docs/research/)                   | 前期调研：顾问工作方法、绩效顾问工作流、界面工作流研究             |
-| [docs/product/](docs/product/)                     | 前端 POC 蓝图与视觉资产                                            |
-| [docs/demo/](docs/demo/)                           | 演示脚本：经验智能这一段的完整走查                                 |
-| [docs/evals/](docs/evals/)                         | 模型侧评测：候选模型的边界验证与是否放行的结论                     |
-| [docs/vertical-slice-01/](docs/vertical-slice-01/) | 最早的垂直切片契约与验收（历史记录，当前口径已由后续切片覆盖）     |
-| [CONTRIBUTING.md](CONTRIBUTING.md)                 | 怎么跑起来、改动要过哪些门禁、提交信息怎么写                       |
+| 文档                                                               | 内容                                                               |
+| ------------------------------------------------------------------ | ------------------------------------------------------------------ |
+| [CONTEXT.md](CONTEXT.md)                                           | 领域词汇表：经营问题、咨询任务、工作步骤、执行事项、工作上下文快照 |
+| [PRODUCT.md](PRODUCT.md)                                           | 产品定位、角色与业务目标                                           |
+| [DESIGN.md](DESIGN.md)                                             | Web 端设计系统：OKLCH 色板、层级与排版规则                         |
+| [docs/architecture/domain-map.md](docs/architecture/domain-map.md) | 领域概念 → 实现文件 / 关键表 / 验证命令的索引，供深挖时定位        |
+| [docs/architecture/](docs/architecture/)                           | 系统全景、系统不变量、集成就绪度与各子系统边界                     |
+| [docs/api-surface.md](docs/api-surface.md)                         | 全部 85 条 HTTP 路由（自动生成，带防漂移守卫）                     |
+| [docs/research/](docs/research/)                                   | 前期调研：顾问工作方法、绩效顾问工作流、界面工作流研究             |
+| [docs/product/](docs/product/)                                     | 前端 POC 蓝图与视觉资产                                            |
+| [docs/demo/](docs/demo/)                                           | 演示脚本：经验智能这一段的完整走查                                 |
+| [docs/evals/](docs/evals/)                                         | 模型侧评测：候选模型的边界验证与是否放行的结论                     |
+| [docs/vertical-slice-01/](docs/vertical-slice-01/)                 | 最早的垂直切片契约与验收（历史记录，当前口径已由后续切片覆盖）     |
+| [CONTRIBUTING.md](CONTRIBUTING.md)                                 | 怎么跑起来、改动要过哪些门禁、提交信息怎么写                       |
+
+## 明确不做的事（主动取舍）
+
+后面的「已知限制」写的是**没做到 / 没覆盖**；这一节写的是**能做但判断不该做**。判据统一来自 [集成就绪度对照](docs/architecture/integration-readiness.md)：「指不出落点的，就不写代码，写清楚边界」。那份清单逐条对照 32 点，结论是已具备 11 / 补上 5 / 不适用 16——这 16 条不是偷懒，是前提组件在本仓库根本不存在，硬做只会造出没人调用的假适配层。
+
+| 不做                               | 判据（为什么硬做是负收益）                                                                                  | 依据                                                                                                                   |
+| ---------------------------------- | ----------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| 外部 ERP / WPS 双写适配层          | 仓库没有金蝶 / WPS 客户端，数据入口是 CSV 与人工上传；没有外部落点                                          | [集成就绪度 §3](docs/architecture/integration-readiness.md)                                                            |
+| Redis / 多机增量同步               | 单 API 进程 + PostgreSQL；幂等由 `requestId` + `pg_advisory_xact_lock` 保证，不需要分布式缓存或跨机时钟一致 | [ADR 0003](docs/adr/0003-idempotency-by-request-id.md)                                                                 |
+| 向量库与自建相似度检索             | 经验复用靠结构化字段与不可变证据定位，不靠相似度；引入近似检索会让「每条结论可追溯」失去判据                | [演示脚本「已知限制」](docs/demo/vs17-experience-intelligence-demo-script.md)                                          |
+| 实时协同 / 双向正文编辑 / 自动发布 | 飞书只是人工协作投影，正文不能反向覆盖 PostgreSQL；自动发布会绕过人工审批门                                 | [系统总览 §3](docs/architecture/system-overview.md)、[演示脚本](docs/demo/vs17-experience-intelligence-demo-script.md) |
+| 让 AI 直接写业务事实               | 立身之本：AI 产出恒为 `PROPOSAL`，写入必须由人或确定性规则的命令完成                                        | [系统总览 §1](docs/architecture/system-overview.md)、[SECURITY.md](SECURITY.md)                                        |
+
+对照表里还如实留了两条**确实没做完**的（双时间模型只做半步、审计更正无合法追加通道），没有把它们包装成「不适用」——诚实区分「不做」和「没做完」，也是取舍的一部分。
 
 ## 已知限制（如实披露）
 
