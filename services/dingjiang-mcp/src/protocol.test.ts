@@ -4,7 +4,9 @@ import {
   createMcpHandler,
   dingjiangCompatibilityTools,
   dingjiangTools,
+  latestProtocolVersion,
   type IntegrationClient,
+  type ToolDescriptor,
 } from "./protocol";
 import { IntegrationClientError, IntegrationTransportError } from "./client";
 
@@ -241,8 +243,81 @@ describe("dingjiang-mcp protocol", () => {
             text: expect.stringContaining("当前项目与当前事项不一致"),
           }),
         ],
+        structuredContent: { code: "CONTEXT_DRIFT" },
       },
     });
+  });
+
+  it("does not leak an arbitrary exception message to the host", async () => {
+    const integration = client();
+    vi.mocked(integration.listEvents).mockRejectedValue(
+      new Error("ENOENT: /home/operator/secret/internal-path"),
+    );
+    const response = await createMcpHandler(integration)({
+      jsonrpc: "2.0",
+      id: "leak-check",
+      method: "tools/call",
+      params: { name: "workspace.events", arguments: {} },
+    });
+    const result = (
+      response as {
+        result: {
+          content: Array<{ text: string }>;
+          structuredContent?: { code?: string };
+        };
+      }
+    ).result;
+    expect(result.content[0]?.text ?? "").not.toContain("/home/operator");
+    expect(result.structuredContent?.code).toBe("TOOL_UNAVAILABLE");
+  });
+
+  it("returns a structured code when the tool is unknown", async () => {
+    const response = await createMcpHandler(client())({
+      jsonrpc: "2.0",
+      id: "unknown-tool",
+      method: "tools/call",
+      params: { name: "nope.nope", arguments: {} },
+    });
+    const result = (
+      response as {
+        result: { isError: boolean; structuredContent?: { code?: string } };
+      }
+    ).result;
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent?.code).toBe("UNKNOWN_TOOL");
+  });
+
+  it("keeps the first handshake when a client initializes twice", async () => {
+    const handler = createMcpHandler(client());
+    const revisionOf = (response: unknown) =>
+      (response as { result: { protocolVersion: string } }).result
+        .protocolVersion;
+
+    const first = await handler({
+      jsonrpc: "2.0",
+      id: "init-1",
+      method: "initialize",
+      params: { protocolVersion: latestProtocolVersion },
+    });
+    const second = await handler({
+      jsonrpc: "2.0",
+      id: "init-2",
+      method: "initialize",
+      params: { protocolVersion: "2025-03-26" },
+    });
+    expect(revisionOf(first)).toBe(latestProtocolVersion);
+    // Re-handshaking must not demote a session that already received the
+    // newer contract.
+    expect(revisionOf(second)).toBe(latestProtocolVersion);
+
+    const listed = await handler({
+      jsonrpc: "2.0",
+      id: "list-after-reinit",
+      method: "tools/list",
+    });
+    const tools = (listed as { result: { tools: ToolDescriptor[] } }).result
+      .tools;
+    expect(tools.some((tool) => tool.outputSchema)).toBe(true);
   });
 
   it("routes strict evidence.propose and rejects privilege or locator injection", async () => {

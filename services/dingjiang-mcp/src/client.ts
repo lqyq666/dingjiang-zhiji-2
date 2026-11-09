@@ -115,7 +115,9 @@ const integrationBaseUrl = (): URL => {
   const raw =
     process.env.DINGJIANG_API_BASE_URL?.trim() || "http://127.0.0.1:3001/api";
   if (cachedBaseUrl?.raw === raw) return cachedBaseUrl.url;
-  const url = validateIntegrationBaseUrl(raw);
+  const url = validateIntegrationBaseUrl(raw, {
+    allowedHosts: process.env.DINGJIANG_API_ALLOWED_HOSTS,
+  });
   cachedBaseUrl = { raw, url };
   return url;
 };

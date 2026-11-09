@@ -18,7 +18,20 @@ const isLoopbackHostname = (hostname: string): boolean => {
   return LOOPBACK_HOSTNAMES.has(host) || isIpv4Loopback(host);
 };
 
-export function validateIntegrationBaseUrl(value: string): URL {
+const parseAllowedHosts = (value: string | undefined): Set<string> => {
+  if (!value) return new Set();
+  return new Set(
+    value
+      .split(",")
+      .map((host) => host.trim().toLowerCase())
+      .filter(Boolean),
+  );
+};
+
+export function validateIntegrationBaseUrl(
+  value: string,
+  options: { allowedHosts?: string } = {},
+): URL {
   let url: URL;
   try {
     url = new URL(value.endsWith("/") ? value : `${value}/`);
@@ -36,6 +49,19 @@ export function validateIntegrationBaseUrl(value: string): URL {
   )
     throw new Error(
       "API 地址仅允许 HTTPS /api，或本机 HTTP /api；不得包含凭据、查询参数或片段",
+    );
+
+  // Optional defence in depth: an operator can pin the token to one host. An
+  // empty allowlist keeps the previous behaviour, so this cannot break an
+  // existing deployment.
+  const allowed = parseAllowedHosts(options.allowedHosts);
+  if (
+    allowed.size > 0 &&
+    !allowed.has(url.host.toLowerCase()) &&
+    !allowed.has(url.hostname.toLowerCase())
+  )
+    throw new Error(
+      `API 主机不在 DINGJIANG_API_ALLOWED_HOSTS 白名单内：${url.host}`,
     );
   return url;
 }

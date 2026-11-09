@@ -60,4 +60,35 @@ describe("validateIntegrationBaseUrl", () => {
       "/api/integration/projects",
     );
   });
+
+  it("keeps an empty allowlist permissive, as before", () => {
+    expect(
+      validateIntegrationBaseUrl("https://dingjiang.example.com/api", {
+        allowedHosts: "",
+      }).hostname,
+    ).toBe("dingjiang.example.com");
+  });
+
+  it("pins the token to the configured hosts when an allowlist is set", () => {
+    const allowedHosts = "dingjiang.example.com, api.internal.example";
+    expect(
+      validateIntegrationBaseUrl("https://dingjiang.example.com/api", {
+        allowedHosts,
+      }).hostname,
+    ).toBe("dingjiang.example.com");
+    // A port-qualified URL must still match its bare hostname entry.
+    expect(
+      validateIntegrationBaseUrl("https://api.internal.example:8443/api", {
+        allowedHosts,
+      }).hostname,
+    ).toBe("api.internal.example");
+  });
+
+  it("rejects a host outside the allowlist even over HTTPS", () => {
+    expect(() =>
+      validateIntegrationBaseUrl("https://other.example.com/api", {
+        allowedHosts: "dingjiang.example.com",
+      }),
+    ).toThrow("不在 DINGJIANG_API_ALLOWED_HOSTS 白名单内");
+  });
 });

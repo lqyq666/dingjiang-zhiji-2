@@ -433,4 +433,44 @@ describe("documented commands exist", () => {
       `README 说 ${stated} 个开关，编排脚本里实际有 ${actual} 个`,
     ).toBe(String(actual));
   });
+
+  it("documents every DINGJIANG variable the code reads", async () => {
+    // An operator who copies .env.example should not discover a required
+    // variable from a startup failure. Anything the code reads is listed, and
+    // the fixture is checked rather than trusted.
+    const read = new Set<string>();
+    const walk = async (dir: string): Promise<void> => {
+      for (const entry of await readdir(dir, { withFileTypes: true })) {
+        if (entry.name === "node_modules" || entry.name === "dist") continue;
+        const path = join(dir, entry.name);
+        if (entry.isDirectory()) await walk(path);
+        else if (/\.(ts|tsx|mjs)$/.test(entry.name)) {
+          const text = await readFile(path, "utf8");
+          for (const match of text.matchAll(
+            /process\.env\.(DINGJIANG_[A-Z0-9_]+)/g,
+          ))
+            read.add(match[1] as string);
+        }
+      }
+    };
+    for (const root of ["apps", "services"])
+      await walk(join(repositoryRoot, root));
+
+    expect(
+      read.size,
+      "没有扫描到任何 DINGJIANG_ 变量，守卫会空转",
+    ).toBeGreaterThan(0);
+
+    const example = await readFile(
+      join(repositoryRoot, ".env.example"),
+      "utf8",
+    );
+    const undocumented = [...read]
+      .filter((name) => !example.includes(name))
+      .sort();
+    expect(
+      undocumented,
+      `.env.example 缺少这些被代码读取的变量：${undocumented.join(", ")}`,
+    ).toEqual([]);
+  });
 });

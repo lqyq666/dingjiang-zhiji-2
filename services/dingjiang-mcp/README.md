@@ -44,6 +44,27 @@ Integration client 将失败分为三类，避免把服务端问题误报为调�
 
 `DINGJIANG_MCP_TIMEOUT_MS` 配置请求超时（默认 10000，范围 100–120000）。超时错误仍要求复用原 requestId / correlationId 核对，不得改 requestId 重试。`DINGJIANG_API_BASE_URL` 的校验结果按原始值缓存，环境变量变化时立即重新校验；loopback HTTP 覆盖完整 `127.0.0.0/8`，并拒绝 `127.0.0.1.evil.com` 这类伪装主机。
 
+## 错误码与处置
+
+工具失败时返回 `isError: true`，并在 `structuredContent` 里给出 `code` / `message` / `retryable` / `requiresHuman`，API 侧失败还带 `correlationId`。`content.text` 是同一份 JSON，供只读文本的宿主使用。
+
+| code                                      | 来源     | 含义                                        | 处置                                               |
+| ----------------------------------------- | -------- | ------------------------------------------- | -------------------------------------------------- |
+| `INVALID_REQUEST`                         | MCP      | 工具参数不符合 contract                     | 按提示修正参数；不要改 `requestId` 重试            |
+| `UNKNOWN_TOOL`                            | MCP      | 工具名不在本会话的工具面                    | 先 `tools/list` 确认；旧宿主可能要用兼容面的扁平名 |
+| `TOOL_UNAVAILABLE`                        | MCP      | 未预期的内部异常                            | 按 `correlationId` 查 API 日志；不要盲目重试       |
+| `CONTEXT_DRIFT`                           | MCP      | 当前项目与当前事项不一致                    | 重新 `workspace.resume` 后再试                     |
+| `REQUEST_TOO_LARGE`                       | stdio    | 单行超过 `DINGJIANG_MCP_MAX_LINE_BYTES`     | 缩减 payload，或调大上限（≤ 64 MiB）               |
+| `HANDLER_FAILURE`                         | stdio    | handler 抛异常，已隔离                      | 看 stderr；后续请求仍会继续处理                    |
+| `FORBIDDEN`                               | API      | 身份、scope 或项目越权                      | 换有权限的身份；聚合工具不会把它降级成「暂无数据」 |
+| `NOT_FOUND`                               | API      | 资源不存在或不在授权范围                    | 单条工具原样返回；聚合工具降级为 `null`            |
+| `INTEGRATION_TIMEOUT`                     | 传输     | 请求超时                                    | **不要改 requestId 重试**，用原请求核对服务端状态  |
+| `INTEGRATION_NETWORK_ERROR`               | 传输     | 连不上 API                                  | 确认本地服务已启动、`DINGJIANG_API_BASE_URL` 正确  |
+| `INTEGRATION_INVALID_RESPONSE`            | 传输     | 响应与 contract 不一致                      | 检查服务端与 MCP 的版本是否匹配                    |
+| `-32700` / `-32601` / `-32602` / `-32603` | JSON-RPC | 解析失败 / 方法不存在 / 参数非法 / 内部错误 | 保留原始请求与 correlationId，必要时升级           |
+
+`TOOL_UNAVAILABLE` 的 message 是固定文案：任意异常的原文可能带出文件路径或内部标识，因此不回显给宿主；需要定位时用 `correlationId`。
+
 ## 多宿主适配（会话级）
 
 不同 AI 宿主对协议版本、工具命名和返回说明书的支持不一样。差异只在握手时收敛一次，不进分发逻辑：
@@ -97,9 +118,47 @@ pnpm --filter @dingjiang/mcp eval
 
 ## 工具边界
 
-默认读取：`workspace.resume`、`workspace.events`、`work.context`、`work.operations`、`evidence.bundle`、`experience.search`、`project.next_action`。
+business 面 13 个、compatibility 面 23 个，去重 28 个；下表按读 / 写分组，`面` 列是首次出现的工具面。
 
-受治理写入：`workpaper.propose`、`material.create`、`evidence.propose`、`material.verify`、`evidence.confirm`、`work.execute`。兼容工具面为 23 个。
+**受治理写入（6）**，都必须同时带 `requestId` 与 `expectedVersion`，参数不接受身份字段：
+
+| 工具                | 用途                        | 面       |
+| ------------------- | --------------------------- | -------- |
+| `work.execute`      | 记录进展、确认或提交方案    | business |
+| `material.verify`   | 记录材料人工核验            | business |
+| `evidence.confirm`  | 确认或驳回证据提案          | business |
+| `workpaper.propose` | 追加根因核验或分析 Proposal | business |
+| `material.create`   | 登记待核验材料版本          | business |
+| `evidence.propose`  | 登记证据 Proposal           | business |
+
+**只读（22）**：
+
+| 工具                        | 用途                       | 面            |
+| --------------------------- | -------------------------- | ------------- |
+| `workspace.events`          | 列出授权事件与项目入口     | business      |
+| `work.operations`           | 读取操作版本与获准动作     | business      |
+| `workspace.resume`          | 恢复当前项目全貌与下一动作 | business      |
+| `work.context`              | 读取项目完整工作上下文     | business      |
+| `evidence.bundle`           | 读取证据包与材料核验       | business      |
+| `experience.search`         | 检索已发布正式经验         | business      |
+| `project.next_action`       | 派生唯一可解释的下一动作   | business      |
+| `list_projects`             | 列出授权咨询项目           | compatibility |
+| `get_current_project`       | 读取当前咨询项目           | compatibility |
+| `get_project_context`       | 读取项目工作上下文         | compatibility |
+| `get_project_state`         | 读取项目状态与阶段         | compatibility |
+| `get_current_work_item`     | 读取当前事项               | compatibility |
+| `list_project_work_items`   | 列出阶段事项               | compatibility |
+| `list_evidence`             | 列出可追溯事实证据         | compatibility |
+| `list_traceable_materials`  | 列出材料摘要与核验状态     | compatibility |
+| `get_material_preview`      | 读取材料安全摘要           | compatibility |
+| `get_evidence`              | 读取单条事实证据           | compatibility |
+| `get_source_version`        | 解析来源版本定位           | compatibility |
+| `get_validation_workpaper`  | 读取根因核验工作底稿       | compatibility |
+| `search_formal_experiences` | 检索正式经验               | compatibility |
+| `get_formal_experience`     | 读取单条正式经验           | compatibility |
+| `get_experience_evidence`   | 读取经验引用的证据定位     | compatibility |
+
+兼容工具面的扁平命名是为旧宿主保留的，两套工具面共享同一批实现与同一份工具定义（`toolRegistry`）。新增工具要同时更新实现、治理分类与两套视图，`tool-contract.test.ts` 会拦住只改一半的情况。
 
 `work.execute` 必须先读取 `work.operations` 的 version、stateFingerprint 和 allowedActions。用户明确确认后记录原话；已知字段由助手关联。相同请求重放返回原回执，不重复执行。状态过期拒绝覆盖；超时保留原请求核对。版本、状态、不可覆盖来源及审计同事务提交。
 

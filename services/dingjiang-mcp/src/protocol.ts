@@ -965,6 +965,22 @@ const toolSurface = (profile: SessionProfile): ToolDescriptor[] => {
   }));
 };
 
+/**
+ * A refusal the caller can act on: the request was well formed and the server
+ * declined it for a stated reason. Its message is safe to return; an arbitrary
+ * exception message is not, so only this type survives the sanitiser.
+ */
+class ToolRefusal extends Error {
+  constructor(
+    readonly code: string,
+    message: string,
+    readonly requiresHuman = false,
+  ) {
+    super(message);
+    this.name = "ToolRefusal";
+  }
+}
+
 const safeToolError = (error: unknown) => {
   if (error instanceof IntegrationClientError)
     return {
@@ -991,9 +1007,19 @@ const safeToolError = (error: unknown) => {
       retryable: false,
       requiresHuman: false,
     };
+  if (error instanceof ToolRefusal)
+    return {
+      code: error.code,
+      message: error.message,
+      retryable: false,
+      requiresHuman: error.requiresHuman,
+    };
+  // Never echo an arbitrary exception message: it can carry file paths or
+  // internal identifiers straight into the host transcript. Callers get a
+  // stable code, and the API path already supplies a correlation id.
   return {
     code: "TOOL_UNAVAILABLE",
-    message: error instanceof Error ? error.message : "MCP 工具调用失败",
+    message: "MCP 工具调用失败；请按 correlationId 核对服务端日志",
     retryable: false,
     requiresHuman: true,
   };
@@ -1002,6 +1028,18 @@ const safeToolError = (error: unknown) => {
 const toolResult = (data: unknown) => ({
   content: [{ type: "text", text: JSON.stringify(data) }],
   structuredContent: data,
+});
+
+const errorResult = (payload: {
+  code: string;
+  message: string;
+  retryable: boolean;
+  requiresHuman: boolean;
+  correlationId?: string;
+}) => ({
+  content: [{ type: "text" as const, text: JSON.stringify(payload) }],
+  structuredContent: payload,
+  isError: true,
 });
 
 const loadWorkContext = async (
@@ -1174,7 +1212,11 @@ const callTool = async (client: IntegrationClient, params: unknown) => {
         ]);
         const projectId = currentProject.id;
         if (currentWorkItem.projectId !== projectId)
-          throw new Error("当前项目与当前事项不一致，请刷新后重试");
+          throw new ToolRefusal(
+            "CONTEXT_DRIFT",
+            "当前项目与当前事项不一致，请刷新后重试",
+            true,
+          );
         const [work, bundle] = await Promise.all([
           loadWorkContext(client, projectId, currentWorkItem),
           loadEvidenceBundle(client, projectId),
@@ -1309,26 +1351,15 @@ const callTool = async (client: IntegrationClient, params: unknown) => {
         );
       }
       default:
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify({
-                code: "UNKNOWN_TOOL",
-                message: "未公开该 MCP 工具",
-                retryable: false,
-                requiresHuman: false,
-              }),
-            },
-          ],
-          isError: true,
-        };
+        return errorResult({
+          code: "UNKNOWN_TOOL",
+          message: "未公开该 MCP 工具",
+          retryable: false,
+          requiresHuman: false,
+        });
     }
   } catch (error) {
-    return {
-      content: [{ type: "text", text: JSON.stringify(safeToolError(error)) }],
-      isError: true,
-    };
+    return errorResult(safeToolError(error));
   }
 };
 
@@ -1390,6 +1421,7 @@ export const createMcpHandler = (
   },
 ) => {
   let sessionProfile = createSessionProfile(undefined);
+  let handshaken = false;
 
   return async (
     request: JsonRpcRequest,
@@ -1414,7 +1446,13 @@ export const createMcpHandler = (
           },
         };
       if (request.method === "initialize") {
-        sessionProfile = createSessionProfile(request.params);
+        // A client should handshake once. A repeat is answered with the first
+        // negotiation instead of silently re-scoping the session, which would
+        // change what an earlier tools/list already promised.
+        if (!handshaken) {
+          sessionProfile = createSessionProfile(request.params);
+          handshaken = true;
+        }
         return {
           jsonrpc: "2.0",
           id,
