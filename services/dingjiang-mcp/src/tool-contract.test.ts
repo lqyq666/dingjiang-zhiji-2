@@ -175,12 +175,8 @@ describe("MCP tool output contracts", () => {
     // The aggregates assemble several payloads into one object. They are
     // listed here on purpose: adding a tool without an output contract must be
     // a deliberate act, not an omission.
-    expect(withoutContract).toEqual([
-      "evidence.bundle",
-      "work.context",
-      "workspace.resume",
-    ]);
-    expect(outputContractToolCount).toBe(25);
+    expect(withoutContract).toEqual([]);
+    expect(outputContractToolCount).toBe(28);
   });
 
   it("declares object schemas that actually constrain named fields", () => {

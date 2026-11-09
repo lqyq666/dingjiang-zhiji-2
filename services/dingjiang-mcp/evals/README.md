@@ -22,7 +22,7 @@ pnpm --filter @dingjiang/mcp exec node evals/run.mjs --json
 | 指标         | 含义                                                                                                                 | 当前基线 |
 | ------------ | -------------------------------------------------------------------------------------------------------------------- | -------- |
 | 工具可达性   | 声明的每个工具都能进入实现，不落到 `UNKNOWN_TOOL`                                                                    | 28/28    |
-| 元数据完备   | 两套工具面的 annotations 全覆盖、`outputSchema`（25 个）、`initialize.instructions` 携带治理不变量                   | 28/28    |
+| 元数据完备   | 两套工具面的 annotations 全覆盖、`outputSchema`（28 个）、`initialize.instructions` 携带治理不变量                   | 28/28    |
 | happy path   | 读工具与两个写工具返回 `structuredContent`，且命中预期 Integration 方法                                              | 24/24    |
 | 越权注入拦截 | `role` / `scopes` / `projectIds` / `sql` / `shell` / `url` / `filePath` 一律 `INVALID_REQUEST` 且零 Integration 调用 | 7/7      |
 | 参数守卫     | 缺失、类型错误、空白、非 UUID 均被拒                                                                                 | 6/6      |

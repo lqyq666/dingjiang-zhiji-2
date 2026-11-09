@@ -158,7 +158,7 @@ Integration client 将失败分为三类，避免把服务端问题误报为调�
 
 规范明确 annotations 只是**不可信提示**，不能作为授权依据。本服务不靠它做权限判断：角色、scope、阶段与完成条件仍由 Integration API 校验，annotations 只影响宿主 UX。
 
-`outputSchema` 由 25 个工具声明，直接取自 client 校验响应所用的那批 Zod schema（`z.toJSONSchema(schema, { io: "output" })`），所以 `structuredContent` 与声明同构是构造出来的，不是承诺出来的。三个聚合工具（`workspace.resume`、`work.context`、`evidence.bundle`）刻意不声明：它们是多个 payload 的拼装结果，写一个猜出来的 schema 只会得到一份会漂移的契约。`project.next_action` 相反——输出是本服务自建对象，于是定义了显式 schema 并在返回前 `parse`，使 `classification` 不可能出现 `PROPOSAL` 之外的值。
+`outputSchema` 由全部 28 个工具声明，直接取自 client 校验响应所用的那批 Zod schema（`z.toJSONSchema(schema, { io: "output" })`），所以 `structuredContent` 与声明同构是构造出来的，不是承诺出来的。三个聚合工具（`workspace.resume`、`work.context`、`evidence.bundle`）由多个 payload 拼装，契约是显式写的；返回前再校验顶层字段是否齐全，防的是拼装漏字段——子结构已由 client 在解析每个子响应时校验过，重复校验只会逼测试夹具去伪造完整性。`project.next_action` 的输出是本服务自建对象，于是定义显式 schema 并在返回前 `parse`，使 `classification` 不可能出现 `PROPOSAL` 之外的值。
 
 `initialize` 结果携带 `instructions`，把治理不变量（PROPOSAL 不是 FACT、写前必读 `work.operations`、超时复用 requestId、定稿仅 OWNER / 发布仅 EXPERT_REVIEWER）交给客户端放进模型上下文，而不是指望每个宿主的提示词恰好写对。
 
@@ -175,7 +175,7 @@ pnpm --filter @dingjiang/mcp build
 pnpm --filter @dingjiang/mcp eval
 ```
 
-当前基线：声明的 28 个工具全部可达（无 `UNKNOWN_TOOL`）；28 个工具的 annotations 与 `outputSchema`（25 个）在 wire 层完备且读/写标注与入参契约一致；24 个读写 happy path 返回 `structuredContent` 并命中预期 Integration 方法；7 类越权字段注入全部 `INVALID_REQUEST` 且零 Integration 调用；6 类非法参数全部被拒；传输超时结构化收敛且不泄露授权头；可选子资源缺失时降级、越权时不降级（2/2）；6 项协议契约通过。任一不变量失败时退出码为 1，CI 会阻断合并。用例格式与扩展方式见 `evals/README.md`。
+当前基线：声明的 28 个工具全部可达（无 `UNKNOWN_TOOL`）；28 个工具的 annotations 与 `outputSchema`（28 个）在 wire 层完备且读/写标注与入参契约一致；24 个读写 happy path 返回 `structuredContent` 并命中预期 Integration 方法；7 类越权字段注入全部 `INVALID_REQUEST` 且零 Integration 调用；6 类非法参数全部被拒；传输超时结构化收敛且不泄露授权头；可选子资源缺失时降级、越权时不降级（2/2）；6 项协议契约通过。任一不变量失败时退出码为 1，CI 会阻断合并。用例格式与扩展方式见 `evals/README.md`。
 
 ## 工具边界
 

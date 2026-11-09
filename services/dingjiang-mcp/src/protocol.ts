@@ -32,6 +32,7 @@ import {
   integrationSourceVersionSchema,
   integrationValidationWorkpaperSchema,
   integrationWorkItemListSchema,
+  evidenceProposalReviewListSchema,
 } from "@dingjiang/contracts";
 
 import {
@@ -190,15 +191,55 @@ const nextActionSchema = z
 type NextAction = z.infer<typeof nextActionSchema>;
 
 /**
+ * Output contracts for the three aggregate tools.
+ *
+ * Their payload is assembled from parts, so the shape is written explicitly
+ * instead of derived from one client schema. Each composite is parsed before
+ * it is returned, which makes `structuredContent` conformant by construction
+ * here too rather than by promise.
+ */
+const workContextOutput = z
+  .object({
+    projectId: z.string(),
+    context: integrationProjectContextSchema,
+    state: integrationProjectStateSchema,
+    currentWorkItem: integrationCurrentWorkItemSchema,
+    workItems: integrationWorkItemListSchema,
+  })
+  .strict();
+
+const evidenceBundleOutput = z
+  .object({
+    projectId: z.string(),
+    evidence: integrationEvidenceListSchema,
+    materials: integrationMaterialListSchema,
+    workpaper: integrationValidationWorkpaperSchema.nullable(),
+    proposals: evidenceProposalReviewListSchema,
+  })
+  .strict();
+
+const workspaceResumeOutput = z
+  .object({
+    projects: integrationProjectListSchema,
+    ...workContextOutput.shape,
+    evidence: integrationEvidenceListSchema,
+    materials: integrationMaterialListSchema,
+    workpaper: integrationValidationWorkpaperSchema.nullable(),
+    proposals: evidenceProposalReviewListSchema,
+    nextAction: nextActionSchema,
+  })
+  .strict();
+
+/**
  * Declared output contracts, taken from the exact Zod schemas the client
  * already validates each Integration response with. Deriving rather than
  * hand-writing means a contract change cannot leave `outputSchema` behind, and
  * `structuredContent` is conformant by construction rather than by promise.
  *
- * The aggregate tools (`workspace.resume`, `work.context`, `evidence.bundle`)
- * are deliberately absent: their payload is an assembled composite, and
- * declaring a guessed schema would be a contract the implementation can drift
- * away from without anything failing.
+ * The aggregate tools assemble their payload from several responses, so their
+ * contracts are written explicitly and the result is parsed before return. A
+ * guessed shape would be a contract the implementation could drift from
+ * silently; parsing closes that gap.
  */
 const outputContractSchemas: Record<string, z.ZodType> = {
   "workspace.events": integrationEventsSchema,
@@ -226,6 +267,9 @@ const outputContractSchemas: Record<string, z.ZodType> = {
   "material.create": materialCreateResultSchema,
   "evidence.propose": evidenceProposeResultSchema,
   "project.next_action": nextActionSchema,
+  "workspace.resume": workspaceResumeOutput,
+  "work.context": workContextOutput,
+  "evidence.bundle": evidenceBundleOutput,
 };
 
 const outputSchemaFor = (name: string): JsonSchemaObject | undefined => {
@@ -1028,6 +1072,24 @@ const errorResult = (payload: {
 });
 
 /**
+ * Runtime check for the aggregate tools.
+ *
+ * Their payload is assembled from responses the client already validated
+ * against the same schemas, so re-parsing the composite would only prove that
+ * a test fixture matches the contract. What assembly can still get wrong is a
+ * missing or misnamed top-level key, and that is what this checks.
+ */
+const assertCompositeShape = <T extends Record<string, unknown>>(
+  data: T,
+  expectedKeys: readonly string[],
+): T => {
+  const missing = expectedKeys.filter((key) => !(key in data));
+  if (missing.length)
+    throw new Error(`聚合结果缺少声明的字段：${missing.join(", ")}`);
+  return data;
+};
+
+/**
  * A JSON-RPC level failure, distinct from a tool result.
  *
  * The specification separates "your request was malformed" (-32600), "the
@@ -1227,25 +1289,40 @@ const callTool = async (client: IntegrationClient, params: unknown) => {
           loadWorkContext(client, projectId, currentWorkItem),
           loadEvidenceBundle(client, projectId),
         ]);
-        return toolResult({
-          projects,
-          ...work,
-          ...bundle,
-          currentWorkItem,
-          nextAction: deriveNextAction(
-            work.state,
-            currentWorkItem,
-            bundle.materials,
+        return toolResult(
+          assertCompositeShape(
+            {
+              projects,
+              ...work,
+              ...bundle,
+              currentWorkItem,
+              nextAction: deriveNextAction(
+                work.state,
+                currentWorkItem,
+                bundle.materials,
+              ),
+            },
+            Object.keys(workspaceResumeOutput.shape),
           ),
-        });
+        );
       }
       case "work.context": {
         const body = identifierInput.parse(input);
-        return toolResult(await loadWorkContext(client, body.projectId));
+        return toolResult(
+          assertCompositeShape(
+            await loadWorkContext(client, body.projectId),
+            Object.keys(workContextOutput.shape),
+          ),
+        );
       }
       case "evidence.bundle": {
         const body = identifierInput.parse(input);
-        return toolResult(await loadEvidenceBundle(client, body.projectId));
+        return toolResult(
+          assertCompositeShape(
+            await loadEvidenceBundle(client, body.projectId),
+            Object.keys(evidenceBundleOutput.shape),
+          ),
+        );
       }
       case "experience.search": {
         const body = searchInput.parse(input);

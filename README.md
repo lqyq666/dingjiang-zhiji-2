@@ -262,7 +262,7 @@ pnpm --filter @dingjiang/mcp build
 pnpm --filter @dingjiang/mcp eval
 ```
 
-覆盖七类不变量：工具声明与实现一致（28/28 可达）、工具元数据完备（annotations 全覆盖、25 个 `outputSchema`、`initialize.instructions` 携带治理不变量）、读写 happy path（24/24）、越权字段注入拦截（7/7）、非法参数拦截（6/6）、传输故障收敛（超时结构化返回且不泄露授权头）、协议契约（6/6）。任一失败即退出码 1，CI 在 `pnpm build` 后执行该评测。方法与未覆盖范围见 `services/dingjiang-mcp/evals/README.md`。
+覆盖七类不变量：工具声明与实现一致（28/28 可达）、工具元数据完备（annotations 全覆盖、28 个 `outputSchema`、`initialize.instructions` 携带治理不变量）、读写 happy path（24/24）、越权字段注入拦截（7/7）、非法参数拦截（6/6）、传输故障收敛（超时结构化返回且不泄露授权头）、协议契约（6/6）。任一失败即退出码 1，CI 在 `pnpm build` 后执行该评测。方法与未覆盖范围见 `services/dingjiang-mcp/evals/README.md`。
 
 MCP 工具面除参数 schema 外还声明 `annotations`（读写、破坏性、幂等、开放世界）与 `outputSchema`：宿主据此决定是否在受治理写入口前弹确认，而 `outputSchema` 直接取自已用于校验响应的 Zod schema，因此 `structuredContent` 与声明同构是构造出来的。设计取舍见 `services/dingjiang-mcp/README.md`。
 

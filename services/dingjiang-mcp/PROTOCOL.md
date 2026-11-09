@@ -124,7 +124,7 @@ sequenceDiagram
 ## 6. 元数据不是抄出来的
 
 - `annotations` 覆盖全部工具，`readOnlyHint` 与「入参是否同时必填 `requestId` + `expectedVersion`」双向断言——受治理写不可能被标成只读。
-- `outputSchema` 有 25 个，直接取自 client 校验响应用的同一批 Zod schema（`z.toJSONSchema`），所以 `structuredContent` 与声明同构是构造出来的。三个聚合工具（`workspace.resume`、`work.context`、`evidence.bundle`）刻意不声明：它们是多个 payload 的拼装，写一个猜出来的 schema 只会得到一份会漂移的契约。
+- `outputSchema` 有 28 个，直接取自 client 校验响应用的同一批 Zod schema（`z.toJSONSchema`），所以 `structuredContent` 与声明同构是构造出来的。三个聚合工具（`workspace.resume`、`work.context`、`evidence.bundle`）由多个 payload 拼装，契约是显式写的；返回前校验顶层字段齐全，因为拼装能出的错是漏字段，而子结构已由 client 在解析每个子响应时校验过。
 - `project.next_action` 相反，输出是本服务自建对象，于是定义显式 schema 并在返回前 `parse`，让 `classification` 不可能出现 `PROPOSAL` 以外的值。
 
 ## 7. 故意不做
