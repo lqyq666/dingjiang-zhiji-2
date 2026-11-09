@@ -351,49 +351,13 @@ const runMetadataCheck = async () => {
  * A session may advertise fewer fields (an old revision has no outputSchema),
  * but it must never advertise weaker governance or let a hostile argument
  * through. The same contract cases therefore run under every combination of
- * negotiated revision, recognised host and fallback surface.
+ * negotiated revision and deployment surface.
  */
 const runSessionMatrixCheck = async () => {
   const latest = protocol.latestProtocolVersion;
-  const workbuddy = { name: "WorkBuddy", version: "5.3.14" };
-  const unknown = { name: "UnrelatedHost", version: "1.0" };
   const scenarios = [
-    {
-      id: "default",
-      env: undefined,
-      clientInfo: undefined,
-      surface: "business",
-    },
-    {
-      id: "default-compat-env",
-      env: "compatibility",
-      clientInfo: undefined,
-      surface: "compatibility",
-    },
-    {
-      id: "workbuddy",
-      env: undefined,
-      clientInfo: workbuddy,
-      surface: "business",
-    },
-    {
-      id: "workbuddy-compat-env",
-      env: "compatibility",
-      clientInfo: workbuddy,
-      surface: "business",
-    },
-    {
-      id: "unknown-host",
-      env: undefined,
-      clientInfo: unknown,
-      surface: "business",
-    },
-    {
-      id: "unknown-host-compat-env",
-      env: "compatibility",
-      clientInfo: unknown,
-      surface: "compatibility",
-    },
+    { id: "default", env: undefined, surface: "business" },
+    { id: "compat-env", env: "compatibility", surface: "compatibility" },
   ];
   const revisions = protocol.supportedProtocolVersions;
   // Protocol cases drive their own handshake; replaying them under a forced
@@ -407,10 +371,7 @@ const runSessionMatrixCheck = async () => {
   let caseRuns = 0;
   for (const scenario of scenarios) {
     for (const revision of revisions) {
-      const session = {
-        protocolVersion: revision,
-        ...(scenario.clientInfo ? { clientInfo: scenario.clientInfo } : {}),
-      };
+      const session = { protocolVersion: revision };
       const failures = [];
       await withEnv({ DINGJIANG_MCP_TOOL_SURFACE: scenario.env }, async () => {
         const { client } = createClient();
@@ -651,7 +612,7 @@ function renderReport(summary, results) {
     "",
     "## 会话档案矩阵",
     "",
-    `协议版本 × 宿主识别 × 工具面共 ${summary.matrix.total} 组，累计回归 ${summary.matrix.caseRuns} 次用例。降级只允许减少元数据，不允许减少治理标注、幂等校验或参数拦截。`,
+    `协议版本 × 工具面共 ${summary.matrix.total} 组，累计回归 ${summary.matrix.caseRuns} 次用例。降级只允许减少元数据，不允许减少治理标注、幂等校验或参数拦截。`,
     "",
     "| 组合 | 结果 | 证据 |",
     "| --- | --- | --- |",

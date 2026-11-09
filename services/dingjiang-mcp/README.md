@@ -65,19 +65,19 @@ Integration client 将失败分为三类，避免把服务端问题误报为调�
 
 `TOOL_UNAVAILABLE` 的 message 是固定文案：任意异常的原文可能带出文件路径或内部标识，因此不回显给宿主；需要定位时用 `correlationId`。
 
-## 多宿主适配（会话级）
+## 会话档案（协议版本与工具面）
 
-不同 AI 宿主对协议版本、工具命名和返回说明书的支持不一样。差异只在握手时收敛一次，不进分发逻辑：
+两个会话可能不同的只有两件事：协商到的协议版本，以及这个部署提供哪套工具面。它们在 `initialize` 时决定一次，保存在 `createMcpHandler` 的闭包里，`tools/list` 按**本次会话**的档案组装：
 
-- `src/host-profiles.ts` 是宿主能力表：按 `initialize.params.clientInfo.name / version` 匹配，新增宿主只需加一行，可覆盖工具面与是否支持结构化输出。
-- `src/session-profile.ts` 由握手参数生成会话档案（协议版本、工具面、是否下发 `outputSchema`），保存在 `createMcpHandler` 的闭包里；`tools/list` 按**本次会话**的档案组装，所以一个进程可同时服务不同宿主。
-- 未识别的宿主回落到部署级 `DINGJIANG_MCP_TOOL_SURFACE`，既有配置不会失效；未握手就 `tools/list` 时使用默认档案。
+- 协议版本按调用方声明协商；旧版本不会收到 `outputSchema`，因为客户端会拿自己无法校验的契约为难。
+- 工具面是**部署决策**：`DINGJIANG_MCP_TOOL_SURFACE=compatibility` 时所有会话都用兼容面；宿主名不能覆盖运维的显式选择。
+- 未握手就 `tools/list` 时使用默认档案，既有部署行为不变。
 
 工具定义只有一份：`protocol.ts` 的 `toolRegistry` 收录全部 28 个工具，两套工具面只是它上面的有序名单，共享同一批 `ToolDescriptor` 实例。`dispatchedToolNames` 仍独立手写，供 `tool-contract.test.ts` 双向比对声明与实现——它不能由注册表自动生成，否则守卫会空转。
 
-**红线**：宿主能力表只影响「广告哪些元数据」，绝不改变租户、角色、scope、`requestId` 幂等与 `expectedVersion` 校验；这些统一在 API 侧执行，工具参数也不接受身份字段。
+**红线**：会话档案只影响「广告哪些元数据」，绝不改变租户、角色、scope、`requestId` 幂等与 `expectedVersion` 校验；这些统一在 API 侧执行，工具参数也不接受身份字段。
 
-传输边界（`createMcpHandler` 是与传输无关的纯函数，新增传输只需新的 dispatcher）与已验证 / 未验证的宿主组合见[宿主支持矩阵](../../docs/architecture/mcp-host-matrix.md)。契约评测会把 40 个用例在 12 组会话组合下各跑一遍，确认降级没有顺手把权限一起降掉。
+`createMcpHandler` 返回的是与传输无关的纯函数，`server.ts` 只把 stdio 接上，因此新增传输是新写一个 dispatcher，不需要改协议层。契约评测会把 40 个用例在 4 组（2 协议版本 × 2 工具面）会话组合下各跑一遍，确认降级没有顺手把权限一起降掉。
 
 ## 工具元数据：让治理边界对宿主可见
 

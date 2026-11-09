@@ -290,39 +290,28 @@ describe("MCP protocol surface", () => {
     expect(result.instructions).toContain("OWNER");
   });
 
-  it("serves two hosts with different surfaces from one process", async () => {
+  it("snapshots the deployment surface at handler creation", async () => {
     const previous = process.env.DINGJIANG_MCP_TOOL_SURFACE;
-    process.env.DINGJIANG_MCP_TOOL_SURFACE = "compatibility";
+    const listWith = async (surface: string | undefined) => {
+      if (surface === undefined) delete process.env.DINGJIANG_MCP_TOOL_SURFACE;
+      else process.env.DINGJIANG_MCP_TOOL_SURFACE = surface;
+      const handler = createMcpHandler(stubClient());
+      await handler({
+        jsonrpc: "2.0",
+        id: "init",
+        method: "initialize",
+        params: { protocolVersion: latestProtocolVersion },
+      });
+      const response = await handler({
+        jsonrpc: "2.0",
+        id: "list",
+        method: "tools/list",
+      });
+      return (response as { result: { tools: ToolDescriptor[] } }).result.tools;
+    };
     try {
-      const listFor = async (clientInfo: unknown) => {
-        const handler = createMcpHandler(stubClient());
-        await handler({
-          jsonrpc: "2.0",
-          id: "init",
-          method: "initialize",
-          params: { protocolVersion: latestProtocolVersion, clientInfo },
-        });
-        const response = await handler({
-          jsonrpc: "2.0",
-          id: "list",
-          method: "tools/list",
-        });
-        return (response as { result: { tools: ToolDescriptor[] } }).result
-          .tools;
-      };
-
-      const business = await listFor({
-        name: "WorkBuddy",
-        version: "5.3.14",
-      });
-      const compatibility = await listFor({
-        name: "UnrelatedHost",
-        version: "1.0",
-      });
-      // The old implementation read a process-wide env var, so one process
-      // could only ever serve one of these two surfaces.
-      expect(business).toHaveLength(13);
-      expect(compatibility).toHaveLength(23);
+      expect(await listWith(undefined)).toHaveLength(13);
+      expect(await listWith("compatibility")).toHaveLength(23);
     } finally {
       if (previous === undefined) delete process.env.DINGJIANG_MCP_TOOL_SURFACE;
       else process.env.DINGJIANG_MCP_TOOL_SURFACE = previous;

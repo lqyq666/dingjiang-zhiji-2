@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { findHostProfile, hostProfiles } from "./host-profiles";
 import {
   createSessionProfile,
   latestProtocolVersion,
@@ -18,31 +17,22 @@ afterEach(() => {
 });
 
 describe("session profile", () => {
-  it("defaults to the historical behaviour when there is no handshake", () => {
+  it("defaults to the business surface and the newest revision", () => {
     delete process.env.DINGJIANG_MCP_TOOL_SURFACE;
     expect(createSessionProfile(undefined)).toEqual({
-      hostId: "default",
       revision: latestProtocolVersion,
       toolSurface: "business",
       structuredToolOutput: true,
     });
   });
 
-  it("still honours the deployment-level compatibility switch", () => {
+  it("honours the deployment-level surface choice", () => {
     process.env.DINGJIANG_MCP_TOOL_SURFACE = "compatibility";
     expect(createSessionProfile(undefined).toolSurface).toBe("compatibility");
+    // A host name must not override the operator's explicit choice.
     expect(
-      createSessionProfile({ clientInfo: { name: "UnknownHost" } }).toolSurface,
+      createSessionProfile({ clientInfo: { name: "WorkBuddy" } }).toolSurface,
     ).toBe("compatibility");
-  });
-
-  it("lets a recognised host choose its surface inside a shared process", () => {
-    process.env.DINGJIANG_MCP_TOOL_SURFACE = "compatibility";
-    const profile = createSessionProfile({
-      clientInfo: { name: "WorkBuddy", version: "5.3.14" },
-    });
-    expect(profile.hostId).toBe("workbuddy");
-    expect(profile.toolSurface).toBe("business");
   });
 
   it("gates output contracts by the negotiated revision", () => {
@@ -65,30 +55,11 @@ describe("session profile", () => {
     }
   });
 
-  it("never carries identity or authorization in a host profile", () => {
-    // A profile may only change advertised metadata. Tenant, role, scopes and
-    // tokens are injected by the transport/API, never by a host capability row.
-    for (const profile of hostProfiles) {
-      for (const forbidden of [
-        "tenant",
-        "role",
-        "scope",
-        "token",
-        "projectIds",
-      ])
-        expect(Object.keys(profile)).not.toContain(forbidden);
-    }
+  it("carries metadata only, never identity or authorization", () => {
     expect(Object.keys(createSessionProfile(undefined)).sort()).toEqual([
-      "hostId",
       "revision",
       "structuredToolOutput",
       "toolSurface",
     ]);
-  });
-
-  it("matches host names case-insensitively and ignores unknown hosts", () => {
-    expect(findHostProfile("WORKBUDDY")?.id).toBe("workbuddy");
-    expect(findHostProfile("unrelated-client")).toBeUndefined();
-    expect(findHostProfile("")).toBeUndefined();
   });
 });

@@ -1,10 +1,12 @@
-import { findHostProfile, type ToolSurfaceName } from "./host-profiles";
-
 /**
- * Everything that may differ between two MCP sessions, resolved once at
- * `initialize` and kept in the handler closure. `tools/list` must describe the
- * revision and surface this session agreed on, not whatever the newest build
- * happens to support.
+ * What can differ between two MCP sessions: the negotiated protocol revision,
+ * and the tool surface this deployment serves. Both are resolved once at
+ * initialize and kept in the handler closure, so tools/list describes what this
+ * session agreed on rather than whatever the newest build supports.
+ *
+ * The surface is a deployment decision. A host cannot widen it, so setting
+ * DINGJIANG_MCP_TOOL_SURFACE=compatibility gets that surface for every session
+ * instead of being silently overridden per client.
  */
 export const latestProtocolVersion = "2025-06-18";
 
@@ -29,45 +31,26 @@ export const negotiateProtocolVersion = (requested: unknown): string =>
     ? requested
     : latestProtocolVersion;
 
+export type ToolSurfaceName = "business" | "compatibility";
+
 export type SessionProfile = {
-  hostId: string;
   revision: string;
   toolSurface: ToolSurfaceName;
   structuredToolOutput: boolean;
 };
 
-/** Kept as the fallback so existing deployments using the env var still work. */
 const environmentSurface = (): ToolSurfaceName =>
   process.env.DINGJIANG_MCP_TOOL_SURFACE === "compatibility"
     ? "compatibility"
     : "business";
 
-type InitializeParams = {
-  protocolVersion?: unknown;
-  clientInfo?: { name?: unknown; version?: unknown };
-  capabilities?: unknown;
-};
-
-/**
- * Derive a session profile from the handshake. Unknown or absent clientInfo
- * falls back to the historical environment-driven behaviour, so introducing
- * host profiles cannot change what an existing host sees.
- */
 export const createSessionProfile = (params: unknown): SessionProfile => {
-  const raw = (params ?? {}) as InitializeParams;
-  const clientInfo = raw.clientInfo ?? {};
-  const name = typeof clientInfo.name === "string" ? clientInfo.name : "";
-  const version =
-    typeof clientInfo.version === "string" ? clientInfo.version : "";
-  const host = findHostProfile(name, version);
-  const revision = negotiateProtocolVersion(raw.protocolVersion);
-
+  const revision = negotiateProtocolVersion(
+    (params as { protocolVersion?: unknown } | undefined)?.protocolVersion,
+  );
   return {
-    hostId: host?.id ?? "default",
     revision,
-    toolSurface: host?.toolSurface ?? environmentSurface(),
-    structuredToolOutput:
-      (host?.supportsStructuredOutput ?? true) &&
-      structuredToolOutputFor(revision),
+    toolSurface: environmentSurface(),
+    structuredToolOutput: structuredToolOutputFor(revision),
   };
 };
