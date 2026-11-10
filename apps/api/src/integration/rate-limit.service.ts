@@ -1,6 +1,7 @@
 import {
   HttpException,
   Injectable,
+  Logger,
   type OnModuleDestroy,
 } from "@nestjs/common";
 import type { Pool } from "pg";
@@ -12,6 +13,8 @@ import { createPool } from "../vs01-db";
  * integration and a batch job do not need the same ceiling.
  */
 const DEFAULT_LIMITS = { read: 360, write: 60 } as const;
+const WINDOW_RETENTION_MS = 24 * 60 * 60_000;
+const SWEEP_INTERVAL_MS = 5 * 60_000;
 
 const LIMIT_ENV = {
   read: "DINGJIANG_RATE_LIMIT_READ_PER_MIN",
@@ -112,6 +115,8 @@ export const enforceWindow = async (
 @Injectable()
 export class RateLimitService implements OnModuleDestroy {
   private readonly pool = createPool();
+  private readonly logger = new Logger(RateLimitService.name);
+  private nextSweepAt = 0;
 
   async onModuleDestroy(): Promise<void> {
     await this.pool.end();
@@ -122,6 +127,25 @@ export class RateLimitService implements OnModuleDestroy {
     method: string,
   ): Promise<void> {
     const bucket: RateLimitBucket = method === "GET" ? "read" : "write";
-    await enforceWindow(this.pool, actor, bucket);
+    const now = Date.now();
+    await enforceWindow(this.pool, actor, bucket, now);
+    if (now < this.nextSweepAt) return;
+    this.nextSweepAt = now + SWEEP_INTERVAL_MS;
+    // The runtime pool is tenant-bound. Replicas can sweep distinct expired rows.
+    try {
+      await this.pool.query(
+        `WITH expired AS (
+           SELECT ctid FROM api_rate_limit_windows
+           WHERE tenant_id = $1 AND window_start < $2
+           ORDER BY window_start
+           LIMIT 5000 FOR UPDATE SKIP LOCKED
+         )
+         DELETE FROM api_rate_limit_windows AS target
+         USING expired WHERE target.tenant_id = $1 AND target.ctid = expired.ctid`,
+        [actor.tenantId, minuteStart(now - WINDOW_RETENTION_MS)],
+      );
+    } catch {
+      this.logger.warn("过期限流窗口清理失败，将在下次周期重试");
+    }
   }
 }

@@ -403,7 +403,13 @@ const run = process.env.PRODUCTION_INTEGRATION === "1";
             "x-correlation-id": correlationId,
           },
         });
-      const now = Date.UTC(2026, 0, 1, 0, 0, 15);
+      const now = Math.floor(Date.now() / 60_000) * 60_000 + 600_000 + 15_000;
+      const expired = new Date(now - 48 * 60 * 60_000);
+      const recent = new Date(now - 60_000);
+      await ownerPool.query(
+        "INSERT INTO api_rate_limit_windows (tenant_id, actor_key, bucket, window_start, request_count) VALUES ($1,'retention-fixture','read',$2,1),($1,'retention-fixture','read',$3,1),('other-enterprise','retention-fixture','read',$2,1)",
+        [tenant, expired, recent],
+      );
       const clock = vi.spyOn(Date, "now").mockReturnValue(now);
       const previousRateLimit = {
         DINGJIANG_RATE_LIMIT_ENABLED: process.env.DINGJIANG_RATE_LIMIT_ENABLED,
@@ -414,6 +420,16 @@ const run = process.env.PRODUCTION_INTEGRATION === "1";
       process.env.DINGJIANG_RATE_LIMIT_READ_PER_MIN = "1";
       try {
         expect((await read(token)).status).toBe(200);
+        const retained = await ownerPool.query<{
+          tenant_id: string;
+          window_start: Date;
+        }>(
+          "SELECT tenant_id, window_start FROM api_rate_limit_windows WHERE actor_key='retention-fixture' ORDER BY window_start",
+        );
+        expect(retained.rows).toEqual([
+          { tenant_id: "other-enterprise", window_start: expired },
+          { tenant_id: tenant, window_start: recent },
+        ]);
         const limited = await read(token);
         expect(limited.status).toBe(429);
         expect(limited.headers.get("retry-after")).toBe("45");
