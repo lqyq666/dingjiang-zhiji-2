@@ -163,6 +163,8 @@ sequenceDiagram
 4. 队列默认接受 64 个未完成请求，包含等待发出的响应。额满时立即返回 `QUEUE_OVERFLOW`。单行长度在 JSON 解析前检查。
 5. handler 异常转换为 `HANDLER_FAILURE`，诊断写入 stderr。
 
+stdio 用于受信任的本机宿主。`readline` 会在收到完整行后交给调度器做字节检查，尚未换行的数据由 Node.js 缓冲。远程客户端使用带请求体限制的 Streamable HTTP 入口。
+
 ## 6. 元数据不是抄出来的
 
 - `annotations` 覆盖全部工具，`readOnlyHint` 与「入参是否同时必填 `requestId` + `expectedVersion`」双向断言——受治理写不可能被标成只读。

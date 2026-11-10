@@ -49,3 +49,18 @@ pnpm demo:mcp
 ## 从 Agent 宿主体验
 
 可按接入说明连接 WorkBuddy 或其他 MCP 宿主，然后用任务集中的 `ctx-01` 检查自然语言能否触发项目恢复。这里的命令行回放验证真实协议、API 和落库，宿主选工具的准确率来自独立的任务执行记录。 [宿主接入](../../services/dingjiang-mcp/README.md) · [Agent 任务集和记录口径](../../services/dingjiang-mcp/evals/agent/README.md)
+
+## 候选版验收记录
+
+`pnpm demo:mcp` 用合成订单运行真实 stdio 和 Streamable HTTP/OAuth MCP 进程、Integration API 与临时 PostgreSQL。回放连接旧版 `initialize` 和新版 `server/discover`，读取工具列表，经 `workspace.resume` 返回授权项目、事实、来源版本和行号。下一动作标记为 `PROPOSAL`。只读写入被拒绝，授权提交可回读，同一请求重放只留下一个回执。 [回放断言](../../apps/api/src/integration/real-e2e.integration.test.ts)
+
+本地候选的验证命令如下。集成运行器的五层共通过 285 项，单独运行的架构检查通过 25 项。MCP 契约评测用确定性 mock 覆盖两种协议和两套工具面。 [权限矩阵](../../apps/api/src/integration-http.integration.test.ts)
+
+```bash
+pnpm verify
+pnpm --filter @dingjiang/architecture-tests test
+pnpm test:coverage
+pnpm demo:mcp
+```
+
+候选版的 WorkBuddy 接入需要独立演示配置。现有 WorkBuddy 使用另一份本地运行目录，本次回放以独立进程验证候选构建。30 个自然语言任务保留为独立模型评测集，本次没有采集模型选工具结果。
