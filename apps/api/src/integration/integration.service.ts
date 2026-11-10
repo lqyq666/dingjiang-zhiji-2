@@ -12,6 +12,7 @@ import {
   integrationEvidenceBundleSchema,
   integrationEvidenceDetailSchema,
   integrationEvidenceListSchema,
+  integrationExecutionProjectSchema,
   integrationExperienceEvidenceSchema,
   integrationExperienceSearchSchema,
   integrationFormalExperienceSchema,
@@ -25,11 +26,15 @@ import {
   integrationWorkContextSchema,
   integrationWorkItemListSchema,
   integrationWorkspaceResumeSchema,
+  projectSchema,
+  workExecutionContextSchema,
   type EvidenceProposalReview,
   type IntegrationPrincipal,
   type IntegrationScope,
   type IntegrationWorkItemList,
   type Project,
+  type TaskDetail,
+  type ValidationWorkpaperVersion,
 } from "@dingjiang/contracts";
 
 import {
@@ -49,14 +54,26 @@ import { MaterialVerificationCommand } from "../materials/material-verification-
 import { EvidenceProposalCommand } from "../evidence/evidence-proposal-command";
 import {
   hasProjectAccess,
+  hasScope,
   requireIntegrationTenant,
+  workpaperReadScopes,
 } from "./integration-access";
+import {
+  activityNoteFor,
+  canReadExperienceCandidate,
+  canReadWorkpaper,
+  scopedExecutionProject,
+  scopedExecutionSourceTask,
+  scopedOutcome,
+  scopedStage,
+  scopedWorkpaper,
+} from "./integration-projection";
 
 const requireScope = (
   principal: IntegrationPrincipal,
   required: IntegrationScope,
 ): void => {
-  if (!principal.scopes.includes(required))
+  if (!hasScope(principal, required))
     throw new ForbiddenException(`Integration principal 缺少 ${required}`);
   requireIntegrationTenant(principal.tenantId);
 };
@@ -132,7 +149,14 @@ export class IntegrationService {
     requireScope(principal, "project:read");
     requireProjectAccess(principal, projectId);
     if (!this.workExecution) throw new BadRequestException("操作上下文不可用");
-    return this.workExecution.context(principal, projectId);
+    const { project, sourceTask, ...context } =
+      await this.workExecution.context(principal, projectId);
+    return workExecutionContextSchema.parse({
+      ...context,
+      project: project && scopedExecutionProject(principal, project),
+      sourceTask:
+        sourceTask && scopedExecutionSourceTask(principal, sourceTask),
+    });
   }
 
   async executeWork(
@@ -143,7 +167,21 @@ export class IntegrationService {
     requireScope(principal, "project:read");
     requireProjectAccess(principal, projectId);
     if (!this.workExecution) throw new BadRequestException("操作服务不可用");
-    return this.workExecution.execute(principal, projectId, input);
+    const result = await this.workExecution.execute(
+      principal,
+      projectId,
+      input,
+    );
+    const project = projectSchema.parse(result.data.project);
+    return {
+      ...result,
+      data: {
+        ...result.data,
+        project: integrationExecutionProjectSchema.parse(
+          scopedExecutionProject(principal, project),
+        ),
+      },
+    };
   }
 
   async evidenceProposals(principal: IntegrationPrincipal, projectId: string) {
@@ -267,15 +305,16 @@ export class IntegrationService {
     );
   }
 
-  private stateFor(project: Project) {
+  private stateFor(principal: IntegrationPrincipal, project: Project) {
+    const stage = currentStageFor(project);
     return integrationProjectStateSchema.parse({
       id: project.id,
       sourceTaskId: project.sourceTaskId,
       name: project.name,
       status: project.status,
       progress: project.progress,
-      currentStage: currentStageFor(project),
-      outcome: project.outcome,
+      currentStage: stage && scopedStage(principal, stage),
+      outcome: scopedOutcome(principal, project.outcome),
     });
   }
 
@@ -289,14 +328,16 @@ export class IntegrationService {
     const projects = (await reader.projectList(projectIds)).filter((project) =>
       hasProjectAccess(principal, project.id),
     );
-    const roleWork = projects.map((project) => ({
-      project,
-      item: actionableWorkItem(
-        project.phases.flatMap((phase) =>
-          phase.tasks.filter((item) => item.owner === principal.role),
-        ),
-      ),
-    }));
+    const roleWork = hasScope(principal, "workitem:read")
+      ? projects.map((project) => ({
+          project,
+          item: actionableWorkItem(
+            project.phases.flatMap((phase) =>
+              phase.tasks.filter((item) => item.owner === principal.role),
+            ),
+          ),
+        }))
+      : [];
     for (const status of workItemPriority) {
       const current = roleWork.find(
         ({ item }) => item?.status === status,
@@ -311,9 +352,13 @@ export class IntegrationService {
     return { projects, current };
   }
 
-  private projectListFor(projects: Project[], current: Project | null) {
+  private projectListFor(
+    principal: IntegrationPrincipal,
+    projects: Project[],
+    current: Project | null,
+  ) {
     return integrationProjectListSchema.parse({
-      items: projects.map((project) => this.stateFor(project)),
+      items: projects.map((project) => this.stateFor(principal, project)),
       currentProjectId: current?.id ?? null,
     });
   }
@@ -321,7 +366,7 @@ export class IntegrationService {
   async projects(principal: IntegrationPrincipal) {
     requireScope(principal, "project:read");
     const { projects, current } = await this.selectProjects(principal);
-    return this.projectListFor(projects, current);
+    return this.projectListFor(principal, projects, current);
   }
 
   private async optionalWorkpaper(
@@ -340,9 +385,7 @@ export class IntegrationService {
     for (const scope of [
       "project:read",
       "workitem:read",
-      "evidence:read",
-      "material:read",
-      "workpaper:read",
+      ...workpaperReadScopes,
     ] as const)
       requireScope(principal, scope);
 
@@ -361,7 +404,8 @@ export class IntegrationService {
       });
 
     const context = integrationProjectContextSchema.parse(
-      projectContextFor(
+      this.contextFor(
+        principal,
         project,
         sourceTask,
         workpaper?.latestConfirmed ?? null,
@@ -371,9 +415,9 @@ export class IntegrationService {
     const currentWorkItem = this.currentWorkItemFor(workItems);
     return integrationWorkspaceResumeSchema.parse({
       projectId: project.id,
-      projects: this.projectListFor(projects, project),
+      projects: this.projectListFor(principal, projects, project),
       context,
-      state: this.stateFor(project),
+      state: this.stateFor(principal, project),
       currentWorkItem,
       workItems,
       evidence: {
@@ -386,7 +430,7 @@ export class IntegrationService {
         context.sourceTask,
         proposalVersionsFor(proposals),
       ),
-      workpaper,
+      workpaper: scopedWorkpaper(principal, workpaper),
       proposals,
       nextAction: deriveNextAction(
         project,
@@ -404,19 +448,67 @@ export class IntegrationService {
   }
 
   async currentProject(principal: IntegrationPrincipal) {
-    return this.stateFor(await this.loadCurrentProject(principal));
+    return this.stateFor(principal, await this.loadCurrentProject(principal));
   }
 
   async projectContext(principal: IntegrationPrincipal, projectId: string) {
     requireScope(principal, "project:read");
     requireProjectAccess(principal, projectId);
-    const result = await this.contextAdapter.currentWorkContext(
-      assistantScope(principal, projectId),
+    const reader = this.vs01.readModel;
+    const project = await reader.project(projectId);
+    const sourceTask = await reader.task(project.sourceTaskId);
+    const workpaper =
+      canReadWorkpaper(principal) && hasLiveRootCauseWorkItem(project)
+        ? await this.optionalWorkpaper(reader, projectId)
+        : null;
+    return integrationProjectContextSchema.parse(
+      this.contextFor(
+        principal,
+        project,
+        sourceTask,
+        workpaper?.latestConfirmed ?? null,
+      ),
     );
-    if (result.status === "FORBIDDEN") throw new ForbiddenException();
-    if (result.status !== "OK" || !result.data)
-      throw new BadRequestException("项目上下文不可用");
-    return integrationProjectContextSchema.parse(result.data);
+  }
+
+  private contextFor(
+    principal: IntegrationPrincipal,
+    project: Project,
+    sourceTask: TaskDetail,
+    workpaper: ValidationWorkpaperVersion | null,
+  ) {
+    const evidence = hasScope(principal, "evidence:read");
+    const materials = hasScope(principal, "material:read");
+    const context = projectContextFor(
+      project,
+      {
+        ...sourceTask,
+        facts: evidence ? sourceTask.facts : [],
+        evidence: evidence ? sourceTask.evidence : [],
+        materials: materials ? sourceTask.materials : [],
+        situations: materials ? sourceTask.situations : [],
+      },
+      workpaper,
+    );
+    const stage = context.project.currentStage;
+    return {
+      ...context,
+      project: {
+        ...context.project,
+        currentStage: stage && scopedStage(principal, stage),
+        phases: context.project.phases.map((phase) =>
+          scopedStage(principal, phase),
+        ),
+        outcome: scopedOutcome(principal, context.project.outcome),
+        experienceSummary: canReadExperienceCandidate(principal)
+          ? context.project.experienceSummary
+          : [],
+        recentActivities: context.project.recentActivities.map((activity) => ({
+          ...activity,
+          note: activityNoteFor(principal, activity),
+        })),
+      },
+    };
   }
 
   async projectState(principal: IntegrationPrincipal, projectId: string) {
@@ -425,7 +517,7 @@ export class IntegrationService {
     const reader = this.vs01.readModel;
     const project = await reader.project(projectId);
     await reader.assertTaskFactsAvailable(project.sourceTaskId);
-    return this.stateFor(project);
+    return this.stateFor(principal, project);
   }
 
   private async readProjectWork(
@@ -448,7 +540,9 @@ export class IntegrationService {
         if (!project) throw new NotFoundException("项目不存在");
         const sourceTask = await reader.task(project.sourceTaskId);
         const workpaper =
-          includeConfirmedWorkpaper && hasLiveRootCauseWorkItem(project)
+          includeConfirmedWorkpaper &&
+          canReadWorkpaper(principal) &&
+          hasLiveRootCauseWorkItem(project)
             ? await this.optionalWorkpaper(reader, project.id)
             : null;
         return { project, sourceTask, workpaper, current };
@@ -468,12 +562,13 @@ export class IntegrationService {
       await this.readProjectWork(principal, projectId, true);
     return integrationWorkContextSchema.parse({
       projectId,
-      context: projectContextFor(
+      context: this.contextFor(
+        principal,
         project,
         sourceTask,
         workpaper?.latestConfirmed ?? null,
       ),
-      state: this.stateFor(project),
+      state: this.stateFor(principal, project),
       currentWorkItem,
       workItems,
     });
@@ -497,14 +592,12 @@ export class IntegrationService {
     return integrationWorkItemListSchema.parse({
       projectId: project.id,
       items: project.phases.flatMap((phase) =>
-        phase.tasks
-          .filter((item) => item.owner === principal.role)
-          .map((item) => ({
-            ...item,
-            projectId: project.id,
-            phaseCode: phase.code,
-            phaseName: phase.name,
-          })),
+        scopedStage(principal, phase).tasks.map((item) => ({
+          ...item,
+          projectId: project.id,
+          phaseCode: phase.code,
+          phaseName: phase.name,
+        })),
       ),
     });
   }
@@ -622,7 +715,7 @@ export class IntegrationService {
         sourceTaskMaterialsFor(sourceTask),
         proposalVersionsFor(proposals),
       ),
-      workpaper,
+      workpaper: scopedWorkpaper(principal, workpaper),
       proposals,
     });
   }
@@ -743,14 +836,16 @@ export class IntegrationService {
     principal: IntegrationPrincipal,
     projectId: string,
   ) {
-    requireScope(principal, "workpaper:read");
-    requireProjectAccess(principal, projectId);
     requireScope(principal, "project:read");
+    requireProjectAccess(principal, projectId);
+    for (const scope of workpaperReadScopes) requireScope(principal, scope);
     const workpaper = await this.vs01.readSnapshot(async (reader) => {
       await reader.projectSourceTaskId(projectId);
       return reader.rootCauseWorkpaper(projectId);
     });
-    return integrationValidationWorkpaperSchema.parse(workpaper);
+    return integrationValidationWorkpaperSchema.parse(
+      scopedWorkpaper(principal, workpaper),
+    );
   }
 
   async searchExperiences(principal: IntegrationPrincipal, query: unknown) {

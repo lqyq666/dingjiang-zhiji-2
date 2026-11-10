@@ -102,14 +102,20 @@ export const integrationMaterialGapSchema = z.object({
   status: z.enum(["MISSING", "UNVERIFIED"]),
 });
 
+// Integration projects expose only the requesting role's authorized work items.
+export const integrationProjectStageSchema =
+  projectSchema.shape.phases.element.extend({
+    tasks: z.array(projectSchema.shape.phases.element.shape.tasks.element),
+  });
+
 export const integrationProjectContextSchema = z.object({
   project: z.object({
     id: idSchema,
     name: idSchema,
     status: projectSchema.shape.status,
-    currentStage: projectSchema.shape.phases.element.nullable(),
+    currentStage: integrationProjectStageSchema.nullable(),
     progress: projectSchema.shape.progress,
-    phases: projectSchema.shape.phases,
+    phases: z.array(integrationProjectStageSchema).length(7),
     outcome: projectSchema.shape.outcome,
     experienceSummary: z.array(
       z.object({
@@ -131,16 +137,9 @@ export const integrationProjectContextSchema = z.object({
     latestConfirmedWorkpaper: z
       .object({
         revision: z.number().int().min(1),
-        conclusion: z.object({
-          result: z.enum([
-            "SUPPORTS",
-            "DOES_NOT_SUPPORT",
-            "INSUFFICIENT_INFORMATION",
-          ]),
-          statement: idSchema,
-          limitations: idSchema,
-          nextChecks: z.array(idSchema).min(1),
-        }),
+        conclusion:
+          validationWorkpaperViewSchema.shape.latestConfirmed.unwrap().shape
+            .content.shape.conclusion,
         locator: sourceLocatorSchema,
         confirmedAt: z.string().datetime(),
         confirmedBy: roleSchema,
@@ -163,7 +162,7 @@ export const integrationProjectStateSchema = z.object({
   name: idSchema,
   status: projectSchema.shape.status,
   progress: projectSchema.shape.progress,
-  currentStage: projectSchema.shape.phases.element.nullable(),
+  currentStage: integrationProjectStageSchema.nullable(),
   outcome: projectSchema.shape.outcome,
 });
 
@@ -228,7 +227,9 @@ export const integrationSourceVersionSchema = z.object({
 });
 
 export const integrationValidationWorkpaperSchema =
-  validationWorkpaperViewSchema;
+  validationWorkpaperViewSchema.extend({
+    workItem: validationWorkpaperViewSchema.shape.workItem.nullable(),
+  });
 
 export const integrationExperienceSearchSchema = z.object({
   query: z.string(),

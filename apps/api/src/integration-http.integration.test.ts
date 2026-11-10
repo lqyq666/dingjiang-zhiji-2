@@ -5,6 +5,7 @@ import {
   integrationCurrentWorkItemSchema,
   integrationEvidenceBundleSchema,
   integrationEvidenceDetailSchema,
+  integrationEvidenceListSchema,
   integrationFailureEnvelopeSchema,
   integrationMaterialListSchema,
   integrationMaterialPreviewSchema,
@@ -173,10 +174,83 @@ const run =
       name,
       status,
       progress,
-      currentStage,
-      outcome,
+      currentStage: currentStage && { ...currentStage, tasks: [] },
+      outcome: { ...outcome, locator: null, evidenceReference: null },
       sourceTaskId: envelope.data.sourceTask.id,
     });
+  });
+
+  it("keeps project-only reads free of evidence, materials and work-item details", async () => {
+    const url = `${api}/integration/projects/PRJ-OTD-001`;
+    const headers = { authorization: `Bearer ${ownerToken}` };
+    const response = await fetch(`${url}/context`, { headers });
+    expect(response.status).toBe(200);
+    const { data } = integrationSuccessEnvelopeSchema(
+      integrationProjectContextSchema,
+    ).parse(await response.json());
+    expect(data.sourceTask).toMatchObject({
+      facts: [],
+      evidence: [],
+      materials: [],
+      materialGaps: [],
+    });
+    expect(data.project.phases.flatMap((phase) => phase.tasks)).toEqual([]);
+    expect(data.project.latestConfirmedWorkpaper).toBeNull();
+    const operations = await fetch(`${url}/operations`, { headers });
+    expect(operations.status).toBe(200);
+    const operationContext = integrationSuccessEnvelopeSchema(
+      workExecutionContextSchema,
+    ).parse(await operations.json()).data;
+    expect(operationContext.allowedActions).toEqual([]);
+    expect(
+      operationContext.project?.phases.flatMap((phase) => phase.tasks),
+    ).toEqual([]);
+    expect(operationContext.project?.node.subtasks).toEqual([]);
+    expect(
+      operationContext.project?.auditTrail.every(
+        (item) => Object.keys(item.snapshot).length === 0,
+      ),
+    ).toBe(true);
+
+    const reserved = "PRJ-SO-202608136";
+    const reservedToken = randomUUID();
+    vi.stubEnv(
+      "DINGJIANG_MCP_TOKEN_BINDINGS_JSON",
+      JSON.stringify([
+        {
+          token: reservedToken,
+          tenantId: "tenant-demo",
+          subjectId: "reserved-project-scope-test",
+          role: "PMC",
+          scopes: ["project:read"],
+          projectIds: [reserved],
+        },
+      ]),
+    );
+    try {
+      const reservedResponse = await fetch(
+        `${api}/integration/projects/${reserved}/operations`,
+        {
+          headers: { authorization: `Bearer ${reservedToken}` },
+        },
+      );
+      expect(reservedResponse.status).toBe(200);
+      const { data: reservation } = integrationSuccessEnvelopeSchema(
+        workExecutionContextSchema,
+      ).parse(await reservedResponse.json());
+      expect(reservation.project).toBeNull();
+      expect(reservation.sourceTask).toMatchObject({
+        id: "SO-202608136",
+        facts: [],
+        evidence: [],
+        materials: [],
+        situations: [],
+      });
+      expect(reservation.sourceTask).not.toHaveProperty("order");
+      expect(reservation.sourceTask).not.toHaveProperty("analysis");
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("derives current project and work item from the token-bound project set", async () => {
@@ -602,6 +676,169 @@ const run =
           integrationFailureEnvelopeSchema.parse(await denied.json()).error
             .code,
         ).toBe("FORBIDDEN");
+      }
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("projects each read scope consistently across aggregate and individual tools", async () => {
+    const projectId = "PRJ-OTD-001";
+    const url = `${api}/integration/projects/${projectId}`;
+    const csv = Buffer.from("day,load\n2026-08-20,scope-matrix-preview");
+    const material = await app.get(Vs01Service).importTaskMaterial(
+      "SO-202608128",
+      {
+        actor: "PMC",
+        situationCode: "CAPACITY_RISK",
+        requirementId: "REQ-CAPACITY-LOAD",
+        title: "Scope matrix CSV",
+        requestId: randomUUID(),
+      },
+      { originalName: "scope-matrix.csv", buffer: csv, size: csv.length },
+    );
+    const all = [
+      "project:read",
+      "workitem:read",
+      "evidence:read",
+      "material:read",
+      "workpaper:read",
+      "experience:read",
+    ];
+    const cases = [
+      {
+        scopes: ["project:read", "workitem:read"],
+        projectIds: [projectId],
+        tenantId: "tenant-demo",
+      },
+      ...["evidence:read", "material:read", "workpaper:read", null].map(
+        (omitted) => ({
+          scopes: all.filter((scope) => scope !== omitted),
+          projectIds: [projectId],
+          tenantId: "tenant-demo",
+        }),
+      ),
+      {
+        scopes: all,
+        projectIds: ["PRJ-NOT-AUTHORIZED"],
+        tenantId: "tenant-demo",
+      },
+      { scopes: all, projectIds: [projectId], tenantId: "tenant-other" },
+    ];
+    const bindings = cases.map((entry) => ({
+      ...entry,
+      token: randomUUID(),
+      subjectId: "scope-matrix",
+      role: "PMC",
+    }));
+    vi.stubEnv("DINGJIANG_MCP_TOKEN_BINDINGS_JSON", JSON.stringify(bindings));
+    try {
+      for (const binding of bindings) {
+        const headers = { authorization: `Bearer ${binding.token}` };
+        const read = (path: string) => fetch(`${url}/${path}`, { headers });
+        const authorized =
+          binding.projectIds.includes(projectId) &&
+          binding.tenantId === "tenant-demo";
+        const evidence = binding.scopes.includes("evidence:read");
+        const materials = binding.scopes.includes("material:read");
+        const full =
+          evidence && materials && binding.scopes.includes("workpaper:read");
+        const [
+          contextResponse,
+          workResponse,
+          evidenceResponse,
+          materialResponse,
+          resume,
+        ] = await Promise.all([
+          read("context"),
+          read("work-context"),
+          read("evidence"),
+          read("materials"),
+          fetch(`${api}/integration/workspace/resume`, { headers }),
+        ]);
+        if (!authorized) {
+          for (const response of [
+            contextResponse,
+            workResponse,
+            evidenceResponse,
+            materialResponse,
+            resume,
+          ]) {
+            expect(response.status).toBe(
+              response === resume && binding.tenantId === "tenant-demo"
+                ? 404
+                : 403,
+            );
+            expect(
+              integrationFailureEnvelopeSchema.parse(await response.json()).ok,
+            ).toBe(false);
+          }
+          continue;
+        }
+        expect(contextResponse.status).toBe(200);
+        expect(workResponse.status).toBe(200);
+        expect(evidenceResponse.status).toBe(evidence ? 200 : 403);
+        expect(materialResponse.status).toBe(materials ? 200 : 403);
+        expect(resume.status).toBe(full ? 200 : 403);
+        const { data: context } = integrationSuccessEnvelopeSchema(
+          integrationProjectContextSchema,
+        ).parse(await contextResponse.json());
+        const { data: work } = integrationSuccessEnvelopeSchema(
+          integrationWorkContextSchema,
+        ).parse(await workResponse.json());
+        expect(context.sourceTask.evidence.length > 0).toBe(evidence);
+        expect(context.sourceTask.facts.length > 0).toBe(evidence);
+        expect(context.sourceTask.materials.length > 0).toBe(materials);
+        expect(context.sourceTask.materialGaps.length > 0).toBe(materials);
+        expect(work.context.sourceTask.evidence).toEqual(
+          context.sourceTask.evidence,
+        );
+        expect(work.context.sourceTask.facts).toEqual(context.sourceTask.facts);
+        expect(
+          work.context.sourceTask.materials.map((item) => item.id),
+        ).toEqual(context.sourceTask.materials.map((item) => item.id));
+        expect(work.context.sourceTask.materialGaps).toEqual(
+          context.sourceTask.materialGaps,
+        );
+        expect(work.workItems.items.every((item) => item.owner === "PMC")).toBe(
+          true,
+        );
+        if (evidence) {
+          const { data: list } = integrationSuccessEnvelopeSchema(
+            integrationEvidenceListSchema,
+          ).parse(await evidenceResponse.json());
+          expect(list.items).toEqual(context.sourceTask.evidence);
+        } else {
+          expect(
+            integrationFailureEnvelopeSchema.parse(
+              await evidenceResponse.json(),
+            ).error.code,
+          ).toBe("FORBIDDEN");
+        }
+        if (materials) {
+          const { data: list } = integrationSuccessEnvelopeSchema(
+            integrationMaterialListSchema,
+          ).parse(await materialResponse.json());
+          expect(list.items.map((item) => item.id)).toEqual(
+            context.sourceTask.materials.map((item) => item.id),
+          );
+          expect(
+            context.sourceTask.materials.find((item) => item.id === material.id)
+              ?.file?.contentPreview,
+          ).toContain("scope-matrix-preview");
+        } else {
+          expect(
+            integrationFailureEnvelopeSchema.parse(
+              await materialResponse.json(),
+            ).error.code,
+          ).toBe("FORBIDDEN");
+          const preview = await read(`materials/${material.id}/preview`);
+          expect(preview.status).toBe(403);
+          expect(
+            integrationFailureEnvelopeSchema.parse(await preview.json()).error
+              .code,
+          ).toBe("FORBIDDEN");
+        }
       }
     } finally {
       vi.unstubAllEnvs();

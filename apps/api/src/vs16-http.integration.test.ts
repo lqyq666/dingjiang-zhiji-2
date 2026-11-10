@@ -1,8 +1,12 @@
+import { randomUUID } from "node:crypto";
 import { NestFactory } from "@nestjs/core";
 import type { INestApplication } from "@nestjs/common";
 import {
   integrationFailureEnvelopeSchema,
+  integrationProjectContextSchema,
   integrationSuccessEnvelopeSchema,
+  integrationValidationWorkpaperSchema,
+  integrationWorkContextSchema,
   integrationWorkspaceResumeSchema,
   projectSchema,
   validationWorkpaperViewSchema,
@@ -281,5 +285,138 @@ httpDescribe("VS16 HTTP root cause workpaper", () => {
       { headers: { "x-vs01-role": "PMC" } },
     );
     expect(response.status).toBe(404);
+  });
+
+  it("applies input scopes to a confirmed workpaper and its work-item locator", async () => {
+    const root = `${api}/vs16/projects/${projectId}/root-cause-workpaper`;
+    const draftResponse = await json(root, "PMC");
+    expect(draftResponse.response.status).toBe(200);
+    const draft = validationWorkpaperViewSchema.parse(draftResponse.body);
+    const content = draft.current?.content;
+    if (!content) throw new Error("Missing real workpaper candidate");
+    const complete = await json(`${root}/complete`, "PMC", {
+      method: "POST",
+      body: JSON.stringify({
+        actor: "PMC",
+        requestId: randomUUID(),
+        expectedRevision: draft.revision,
+        completionNote: "范围回归使用的员工确认记录",
+        confirmedAcceptanceCriteria: draft.workItem.acceptanceCriteria,
+        content: {
+          ...content,
+          materialFindings: content.materialFindings.map((item) => ({
+            ...item,
+            assessment: "SUPPORTS",
+            verificationStatus: "EMPLOYEE_CHECKED",
+          })),
+          conclusion: {
+            result: "SUPPORTS",
+            statement: "scope-matrix-confirmed-workpaper",
+            limitations: "本地合成测试材料",
+            nextChecks: [],
+          },
+        },
+      }),
+    });
+    expect(complete.response.status).toBe(201);
+    const confirmed = validationWorkpaperViewSchema.parse(
+      complete.body,
+    ).latestConfirmed;
+    if (!confirmed) throw new Error("Missing confirmed workpaper version");
+
+    const scopes = [
+      "project:read",
+      "workitem:read",
+      "evidence:read",
+      "material:read",
+      "workpaper:read",
+    ];
+    const omissions = [
+      null,
+      "evidence:read",
+      "material:read",
+      "workpaper:read",
+      "workitem:read",
+    ];
+    const bindings = omissions.map((omitted) => ({
+      token: randomUUID(),
+      tenantId: "tenant-demo",
+      subjectId: "confirmed-workpaper-scope-test",
+      role: "PMC",
+      scopes: scopes.filter((scope) => scope !== omitted),
+      projectIds: [projectId],
+    }));
+    vi.stubEnv("DINGJIANG_MCP_TOKEN_BINDINGS_JSON", JSON.stringify(bindings));
+    try {
+      for (const [index, { token }] of bindings.entries()) {
+        const omitted = omissions[index];
+        const base = `${api}/integration/projects/${projectId}`;
+        const read = (path: string) =>
+          fetch(`${base}/${path}`, {
+            headers: { authorization: `Bearer ${token}` },
+          });
+        const canReadWorkpaper =
+          omitted === null || omitted === "workitem:read";
+        const [context, workContext, paper, locator] = await Promise.all([
+          read("context"),
+          read("work-context"),
+          read("workpaper"),
+          read(
+            `source-versions/${encodeURIComponent(confirmed.locator.sourceVersionId)}`,
+          ),
+        ]);
+        expect(context.status).toBe(200);
+        const { data } = integrationSuccessEnvelopeSchema(
+          integrationProjectContextSchema,
+        ).parse(await context.json());
+        expect(data.project.latestConfirmedWorkpaper).toEqual(
+          canReadWorkpaper
+            ? expect.objectContaining({
+                revision: confirmed.revision,
+                locator: confirmed.locator,
+                conclusion: confirmed.content.conclusion,
+              })
+            : null,
+        );
+        expect(workContext.status).toBe(
+          omitted === "workitem:read" ? 403 : 200,
+        );
+        if (workContext.ok) {
+          const { data: work } = integrationSuccessEnvelopeSchema(
+            integrationWorkContextSchema,
+          ).parse(await workContext.json());
+          expect(work.context.project.latestConfirmedWorkpaper).toEqual(
+            data.project.latestConfirmedWorkpaper,
+          );
+          if (!canReadWorkpaper)
+            expect(
+              work.workItems.items.find((item) => item.id === draft.workItem.id)
+                ?.output.locator,
+            ).toBeNull();
+        }
+        expect(locator.status).toBe(
+          canReadWorkpaper ? 200 : omitted === "evidence:read" ? 403 : 404,
+        );
+        expect(paper.status).toBe(canReadWorkpaper ? 200 : 403);
+        if (paper.ok) {
+          const { data: view } = integrationSuccessEnvelopeSchema(
+            integrationValidationWorkpaperSchema,
+          ).parse(await paper.json());
+          expect(view.latestConfirmed?.locator).toEqual(confirmed.locator);
+          expect(view.workItem).toEqual(
+            omitted === "workitem:read"
+              ? null
+              : expect.objectContaining({ id: draft.workItem.id }),
+          );
+        } else {
+          expect(
+            integrationFailureEnvelopeSchema.parse(await paper.json()).error
+              .code,
+          ).toBe("FORBIDDEN");
+        }
+      }
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });

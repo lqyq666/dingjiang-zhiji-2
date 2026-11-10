@@ -119,7 +119,13 @@ const run = process.env.WORKPAPER_PROPOSAL_HTTP_INTEGRATION === "1";
           tenantId: "tenant-demo",
           subjectId: "workbuddy-pmc-http",
           role: "PMC",
-          scopes: ["project:read", "workpaper:read", "workpaper:write"],
+          scopes: [
+            "project:read",
+            "evidence:read",
+            "material:read",
+            "workpaper:read",
+            "workpaper:write",
+          ],
           projectIds: [projectId],
         },
         {
@@ -238,6 +244,7 @@ const run = process.env.WORKPAPER_PROPOSAL_HTTP_INTEGRATION === "1";
         ok: true,
         data: {
           revision: 1,
+          workItem: null,
           current: {
             kind: "PMC_PROPOSAL",
             classification: "PROPOSAL",

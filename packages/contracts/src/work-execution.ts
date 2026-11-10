@@ -1,4 +1,8 @@
 import { z } from "zod";
+import {
+  integrationProjectStageSchema,
+  integrationSafeMaterialSchema,
+} from "./integration";
 import { governedCommandRequestSchema } from "./governed-command";
 import {
   experienceCandidateInputSchema,
@@ -69,9 +73,24 @@ export const workExecutionRequestSchema =
   governedCommandRequestSchema.safeExtend({
     payload: workExecutionPayloadSchema,
   });
+export const integrationExecutionProjectSchema = projectSchema.extend({
+  phases: z.array(integrationProjectStageSchema).length(7),
+  node: projectSchema.shape.node.extend({
+    subtasks: z.array(projectSchema.shape.node.shape.subtasks.element),
+  }),
+});
+
+const integrationExecutionSourceTaskSchema = taskDetailSchema.extend({
+  order: taskDetailSchema.shape.order.optional(),
+  analysis: taskDetailSchema.shape.analysis.optional(),
+  evidence: z.array(taskDetailSchema.shape.evidence.element),
+  situations: z.array(taskDetailSchema.shape.situations.element),
+  materials: z.array(integrationSafeMaterialSchema),
+});
+
 export const workExecutionContextSchema = z.object({
-  project: projectSchema.nullable(),
-  sourceTask: taskDetailSchema.optional(),
+  project: integrationExecutionProjectSchema.nullable(),
+  sourceTask: integrationExecutionSourceTaskSchema.optional(),
   version: z.number().int().nonnegative(),
   stateFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
   allowedActions: z.array(z.string()),

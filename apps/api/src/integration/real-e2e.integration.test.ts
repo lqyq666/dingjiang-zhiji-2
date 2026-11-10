@@ -786,6 +786,19 @@ describe.skipIf(!run)(
         expect(await call(read, "work.execute", command)).toMatchObject({
           error: { code: -32602, data: { code: "UNKNOWN_TOOL" } },
         });
+        const limitedContext = integrationWorkContextSchema.parse(
+          (await call(apiReadOnly, "work.context", { projectId })).result
+            ?.structuredContent,
+        );
+        expect(limitedContext.context.sourceTask).toMatchObject({
+          facts: [],
+          evidence: [],
+          materials: [],
+          materialGaps: [],
+        });
+        expect(
+          limitedContext.context.project.latestConfirmedWorkpaper,
+        ).toBeNull();
         expect(await call(apiReadOnly, "work.execute", command)).toMatchObject({
           result: {
             isError: true,

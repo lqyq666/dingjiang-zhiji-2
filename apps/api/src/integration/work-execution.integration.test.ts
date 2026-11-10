@@ -504,7 +504,11 @@ const run = process.env.WORK_EXECUTION_INTEGRATION === "1";
           scopes: ["project:read"],
           token: "isolated-read-only-operations-token",
         },
-        { ...principal, token: "isolated-mcp-write-operations-token" },
+        {
+          ...principal,
+          scopes: [...principal.scopes, "workitem:read"],
+          token: "isolated-mcp-write-operations-token",
+        },
       ]);
       const app = await NestFactory.create(AppModule, { logger: false });
       try {

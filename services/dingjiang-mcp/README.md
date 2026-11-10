@@ -199,6 +199,10 @@ Integration client 将失败分为三类，避免把服务端问题误报为调�
 
 升级时先让 API 提供对应入口，再更新 MCP 进程。
 
+`project:read` 可以读取项目状态和基础上下文。`workitem:read` 只显示当前角色负责的事项。`evidence:read` 控制来源事实、证据和项目成果证据定位，`material:read` 控制材料及缺口。底稿完整视图和已确认摘要包含证据与材料判断，读取需要 `workpaper:read`、`evidence:read` 和 `material:read`。底稿关联事项详情还要求该事项的角色权限和 `workitem:read`。
+
+`get_project_context` 和 `work.context` 用空列表或 `null` 表示当前身份不可见的部分。单项工具缺少必需 scope 时返回 `FORBIDDEN`。事项输入引用可包含证据、材料和底稿定位，因此需要上述三种读取 scope。 `work.operations` 和写入回执按同样的读取规则展示项目字段，命令的版本、指纹和幂等校验仍由服务端执行。
+
 512 KiB 上限适用于 JSON-RPC 的完整 `result` 对象，按 UTF-8 计入 `structuredContent`、`content.text` 和新版协议元数据。超限通过 `isError: true` 和 `content.text` 中的 JSON 返回 `AGGREGATE_RESULT_TOO_LARGE` 和 `limitBytes`，供按成功 schema 校验结构化结果的宿主识别。`workspace.resume` 超限时可按需调用 `work.context` 或 `evidence.bundle`。兼容面提供 `get_evidence`、`get_material_preview` 和 `get_validation_workpaper` 等单项读取。
 
 `initialize` 和 `server/discover` 都返回 `instructions`。宿主可据此展示 PROPOSAL 的来源、确认受治理写入，并在超时时复用 `requestId`。新版每次调用都携带版本和能力字段。 [协议说明](PROTOCOL.md#3-协议方法)
@@ -268,4 +272,4 @@ business 面 13 个、compatibility 面 23 个，去重 28 个；下表按读 / 
 
 不存在工作底稿或材料正文时返回安全的 NOT_FOUND/BODY_NOT_AVAILABLE 语义，不伪造内容；材料预览不返回原始 bytes、绝对路径或存储键。
 
-`get_validation_workpaper` 在底稿缺失时返回 `NOT_FOUND`。`workspace.resume` 和 `evidence.bundle` 在 API 验证项目及底稿读权限后，用 `workpaper: null` 表示底稿缺失。权限不足返回 `FORBIDDEN`，找不到授权项目时返回 `NOT_FOUND`。
+`get_validation_workpaper` 在满足底稿读取 scope 后查询底稿，缺失时返回 `NOT_FOUND`。`workspace.resume` 和 `evidence.bundle` 在 API 验证项目及底稿读权限后，用 `workpaper: null` 表示底稿缺失。权限不足返回 `FORBIDDEN`，找不到授权项目时返回 `NOT_FOUND`。
