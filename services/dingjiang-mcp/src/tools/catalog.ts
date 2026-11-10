@@ -138,7 +138,7 @@ const operationTools: ToolSeed[] = [
   {
     name: "work.execute",
     description:
-      "记录进展或执行经用户确认的治理动作。新命令先读 work.operations，用 version 填 expectedVersion，完整复制 stateFingerprint。展示影响并用用户原话填 confirmation。requestId 和 correlationId 必须为 UUID。progress.record 在 operation 中填写 workItemId 和 note。成功后可回读核对。结果未知时先核对，重放用完整原命令，保留所有字段和值。方案定稿仅 OWNER、经验发布仅 EXPERT_REVIEWER。",
+      '记录进展或执行经用户确认的治理动作。进展的 payload.operation 格式为 {"action":"progress.record","workItemId":"实际事项 ID","note":"进展内容"}。新命令先读 work.operations，用 version 填 expectedVersion，完整复制 stateFingerprint。展示影响并用用户原话填 confirmation。requestId 和 correlationId 必须为 UUID。成功后回读核对。结果未知时先核对，重放用完整原命令，保留所有字段和值。方案定稿仅 OWNER、经验发布仅 EXPERT_REVIEWER。',
     inputSchema: z.toJSONSchema(workExecuteInput, { io: "input" }),
   },
   {
