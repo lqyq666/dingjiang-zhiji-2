@@ -58,8 +58,8 @@ const toolGovernance = {
   get_current_work_item: { title: "读取当前事项", kind: "read" },
   list_project_work_items: { title: "列出阶段事项", kind: "read" },
   list_evidence: { title: "列出可追溯事实证据", kind: "read" },
-  list_traceable_materials: { title: "列出材料摘要与核验状态", kind: "read" },
-  get_material_preview: { title: "读取材料安全摘要", kind: "read" },
+  list_traceable_materials: { title: "列出材料与核验状态", kind: "read" },
+  get_material_preview: { title: "读取材料受控预览", kind: "read" },
   get_evidence: { title: "读取单条事实证据", kind: "read" },
   get_source_version: { title: "解析来源版本定位", kind: "read" },
   get_validation_workpaper: { title: "读取根因核验工作底稿", kind: "read" },
@@ -138,8 +138,8 @@ const operationTools: ToolSeed[] = [
   {
     name: "work.execute",
     description:
-      "根据用户明确指令记录进展、确认事项或结果、提交方案/经验。先读取 work.operations，展示具体影响并取得本次用户确认；confirmation 保存用户原话。方案定稿仅 OWNER、经验发布仅 EXPERT_REVIEWER。所有字段由已知上下文组装，只询问缺少的实际事实。成功回执包含提交后的项目事实；超时不得改 requestId 重试，必须复用原请求核对。",
-    inputSchema: z.toJSONSchema(workExecuteInput),
+      "记录进展或执行经用户确认的治理动作。新命令先读 work.operations，用 version 填 expectedVersion，完整复制 stateFingerprint。展示影响并用用户原话填 confirmation。requestId 和 correlationId 必须为 UUID。progress.record 在 operation 中填写 workItemId 和 note。成功后可回读核对。结果未知时先核对，重放用完整原命令，保留所有字段和值。方案定稿仅 OWNER、经验发布仅 EXPERT_REVIEWER。",
+    inputSchema: z.toJSONSchema(workExecuteInput, { io: "input" }),
   },
   {
     name: "material.verify",
@@ -238,7 +238,7 @@ const compatibilitySeeds: ToolSeed[] = [
   {
     name: "list_traceable_materials",
     description:
-      "列出已授权咨询项目的安全材料摘要与输入缺口；每条材料显式返回 verificationStatus，以及 latestVerificationAudit（最近人工核验的 eventType/version/actor/note/occurredAt，未核验时为 null）。",
+      "列出已授权项目的材料 ID、核验状态、最近核验记录与输入缺口。用户要看预览或摘要时，先用此工具定位 items[].id，再调用 get_material_preview 核对正文可用性。",
     inputSchema: {
       type: "object",
       properties: {
@@ -251,7 +251,7 @@ const compatibilitySeeds: ToolSeed[] = [
   {
     name: "get_material_preview",
     description:
-      "读取授权项目内一条材料的安全摘要、verificationStatus 与 latestVerificationAudit；不可读附件不返回原始 bytes 或存储键。",
+      "用户要求查看材料预览或摘要时使用。用列表中的 items[].id 作为 materialId，即使列表显示无附件也需查询。只有 bodyAvailable 为 true 时才引用返回的预览，否则说明正文不可读。结果同时带有核验状态和最近核验记录。",
     inputSchema: {
       type: "object",
       properties: {

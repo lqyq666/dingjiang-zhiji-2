@@ -171,6 +171,35 @@ describe("MCP tool governance annotations", () => {
   });
 });
 
+describe("MCP tool input contracts", () => {
+  it("publishes the progress command inputs without requiring its defaulted output reference", () => {
+    const tool = allTools.find(({ name }) => name === "work.execute");
+
+    expect(tool?.inputSchema).toMatchObject({
+      properties: {
+        requestId: { format: "uuid" },
+        correlationId: { format: "uuid" },
+        payload: {
+          properties: {
+            operation: {
+              oneOf: expect.arrayContaining([
+                expect.objectContaining({
+                  properties: expect.objectContaining({
+                    action: { type: "string", const: "progress.record" },
+                    note: expect.objectContaining({ type: "string" }),
+                  }),
+                  required: ["action", "workItemId", "note"],
+                  additionalProperties: false,
+                }),
+              ]),
+            },
+          },
+        },
+      },
+    });
+  });
+});
+
 describe("MCP tool output contracts", () => {
   it("declares an output contract for every tool with a single integration payload", () => {
     const withoutContract = allTools

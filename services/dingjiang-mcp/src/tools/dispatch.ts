@@ -63,10 +63,14 @@ export type IntegrationClient = Pick<
 const safeToolError = (error: unknown) => {
   if (error instanceof IntegrationClientError) {
     const { failure, retryAfterSeconds, requestCorrelationId } = error;
-    const message =
-      failure.error.code === "RATE_LIMITED" && retryAfterSeconds === undefined
-        ? "请求过于频繁。等待时间未知，请暂停调用并稍后核对。"
-        : failure.error.message;
+    let { message } = failure.error;
+    if (failure.error.code === "RATE_LIMITED") {
+      const wait =
+        retryAfterSeconds === undefined
+          ? "等待时间未知。"
+          : `最早可在 ${retryAfterSeconds} 秒后另行发起。`;
+      message = `请求过于频繁。本轮停止调用并告知用户。${wait}`;
+    }
     return {
       code: failure.error.code,
       message,

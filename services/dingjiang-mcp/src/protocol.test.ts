@@ -342,6 +342,7 @@ describe("HTTP failures delivered to the host", () => {
   it.each([
     { revision: "legacy", meta: undefined, retryAfter: "45", seconds: 45 },
     { revision: "modern", meta: modernMeta, retryAfter: "45", seconds: 45 },
+    { revision: "modern", meta: modernMeta, retryAfter: "0", seconds: 0 },
     { revision: "modern", meta: modernMeta, retryAfter: "45 seconds" },
   ])(
     "$revision delivers a real 429 with Retry-After $retryAfter as error content",
@@ -394,11 +395,13 @@ describe("HTTP failures delivered to the host", () => {
           correlationId: serverCorrelationId,
           requestCorrelationId: requestIds[0],
         });
+        expect(failure.message).toContain("本轮停止调用");
         if (seconds === undefined) {
           expect(failure).not.toHaveProperty("retryAfterSeconds");
           expect(failure.message).toContain("等待时间未知");
         } else {
           expect(failure.retryAfterSeconds).toBe(seconds);
+          expect(failure.message).toContain(`${seconds} 秒`);
         }
         expect(JSON.stringify(result)).not.toContain("fixture-token");
       } finally {
@@ -761,6 +764,7 @@ describe("dingjiang-mcp protocol", () => {
         ).result;
         expect(instructions).toContain("只读");
         expect(instructions).toContain("PROPOSAL");
+        expect(instructions).toContain("RATE_LIMITED");
         expect(instructions).not.toContain("work.execute");
 
         const listed = await handler({

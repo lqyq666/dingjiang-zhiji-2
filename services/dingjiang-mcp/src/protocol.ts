@@ -41,11 +41,14 @@ const factsInstruction =
   "鼎江智绩治理型 MCP。PostgreSQL 是唯一业务事实源；工具返回的是服务端已授权的事实快照。";
 const proposalInstruction =
   "AI 归纳出的任何结论一律是 PROPOSAL，不得表述为 FACT、根因或已确认结论。";
+const rateLimitInstruction =
+  "收到 RATE_LIMITED 时本轮停止调用，向用户报告 retryAfterSeconds 或等待时间未知。retryable 表示满足等待条件后可另行发起。";
 
 const readOnlyInstructions = [
   factsInstruction,
   "当前 MCP 工具面仅提供只读查询。回答时请引用工具返回的来源定位。",
   proposalInstruction,
+  rateLimitInstruction,
 ].join("\n");
 
 /** Governance instructions provided in discovery or the legacy handshake. */
@@ -54,9 +57,10 @@ export const serverInstructions = [
   "",
   "必须遵守：",
   `1. ${proposalInstruction}`,
-  "2. 调用 work.execute / material.verify / evidence.confirm / workpaper.propose / material.create / evidence.propose 前，先读 work.operations 取得最新 expectedVersion 与 allowedActions，向用户展示具体影响并取得本次确认；confirmation 保存用户原话，不得代写。",
-  "3. 写入结果未知时，用原 requestId 和原命令核对状态或安全重放。收到限流错误时遵守 retryAfterSeconds，等待时间未知时暂停调用。",
-  "4. 方案定稿仅 OWNER，经验发布仅 EXPERT_REVIEWER；工具不因调用方声明而放宽角色。",
+  "2. 受治理写入前，先读 work.operations 核对 allowedActions，按工具契约取得对应版本。向用户展示影响并取得本次确认，confirmation 使用用户原话。",
+  "3. 写入结果未知时先用原 requestId 核对状态。确需重放时原样提交完整原命令，缺字段先询问。",
+  `4. ${rateLimitInstruction}`,
+  "5. 方案定稿仅 OWNER，经验发布仅 EXPERT_REVIEWER。角色由服务端校验。",
 ].join("\n");
 
 export const createMcpToolAccess = (profile: SessionProfile) => {
