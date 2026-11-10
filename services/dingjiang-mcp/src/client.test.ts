@@ -14,6 +14,7 @@ const originalAllowedHosts = process.env.DINGJIANG_API_ALLOWED_HOSTS;
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
   if (originalBaseUrl === undefined) delete process.env.DINGJIANG_API_BASE_URL;
   else process.env.DINGJIANG_API_BASE_URL = originalBaseUrl;
   if (originalToken === undefined) delete process.env.DINGJIANG_MCP_API_TOKEN;
@@ -203,6 +204,58 @@ describe("dingjiang-mcp Integration client", () => {
   });
 });
 
+describe("Retry-After on Integration failures", () => {
+  it.each([
+    ["45", 45],
+    ["0", 0],
+    ["Tue, 10 Nov 2026 12:00:45 GMT", 45],
+    ["Tuesday, 10-Nov-26 12:00:45 GMT", 45],
+    ["Tue Nov 10 12:00:45 2026", 45],
+    ["Sun Nov  8 12:00:45 2026", 0],
+    ["Tue, 10 Nov 2026 12:00:00 GMT", 0],
+    ["Thu, 31 Feb 2026 12:00:45 GMT", undefined],
+    ["45 seconds", undefined],
+    ["1.5", undefined],
+    ["-1", undefined],
+    ["+45", undefined],
+    ["9007199254740992", undefined],
+    ["2026", 2026],
+    ["", undefined],
+    [null, undefined],
+  ])("interprets header %j as %j without retrying", async (header, seconds) => {
+    vi.spyOn(Date, "now").mockReturnValue(
+      Date.UTC(2026, 10, 10, 12, 0, 0, 500),
+    );
+    process.env.DINGJIANG_API_BASE_URL = "http://127.0.0.1:3001/api";
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          ok: false,
+          error: {
+            code: "RATE_LIMITED",
+            message: "请求过于频繁",
+            retryable: true,
+            requiresHuman: false,
+          },
+          correlationId: "27a2f751-c719-4a81-a16b-fdaa4fc2c6fb",
+        }),
+        {
+          status: 429,
+          headers: header === null ? {} : { "Retry-After": header },
+        },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(
+      new DingjiangIntegrationClient(undefined, "fixture-token").listProjects(),
+    ).rejects.toMatchObject({
+      failure: { error: { code: "RATE_LIMITED", retryable: true } },
+      retryAfterSeconds: seconds,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("dingjiang-mcp transport classification", () => {
   const originalTimeout = process.env.DINGJIANG_MCP_TIMEOUT_MS;
 
@@ -219,19 +272,23 @@ describe("dingjiang-mcp transport classification", () => {
 
   it("classifies timeouts and forbids requestId-swapped retries", async () => {
     useLoopback();
-    vi.stubGlobal(
-      "fetch",
-      vi
-        .fn()
-        .mockRejectedValue(
-          Object.assign(new Error("timed out"), { name: "TimeoutError" }),
-        ),
-    );
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValue(
+        Object.assign(new Error("timed out"), { name: "TimeoutError" }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
     const error = await new DingjiangIntegrationClient()
       .getProjectState("PRJ-1")
       .catch((value: unknown) => value);
     expect(error).toBeInstanceOf(IntegrationTransportError);
-    expect(error).toMatchObject({ code: "INTEGRATION_TIMEOUT" });
+    const headers = new Headers(fetchMock.mock.calls[0]?.[1].headers);
+    expect(error).toMatchObject({
+      code: "INTEGRATION_TIMEOUT",
+      correlationId: headers.get("x-correlation-id"),
+    });
+    expect(headers.get("x-correlation-id")).toMatch(/^[\da-f-]{36}$/i);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     expect((error as Error).message).toContain("不得改 requestId 重试");
     expect(JSON.stringify(error)).not.toContain("local-secret");
   });
@@ -263,52 +320,60 @@ describe("dingjiang-mcp transport classification", () => {
 
   it("classifies an unreachable API as a network error", async () => {
     useLoopback();
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockRejectedValue(new TypeError("fetch failed")),
-    );
-    await expect(
-      new DingjiangIntegrationClient().getProjectState("PRJ-1"),
-    ).rejects.toMatchObject({
+    const fetchMock = vi.fn().mockRejectedValue(new TypeError("fetch failed"));
+    vi.stubGlobal("fetch", fetchMock);
+    const failure = await new DingjiangIntegrationClient()
+      .getProjectState("PRJ-1")
+      .catch((error: unknown) => error);
+    expect(failure).toMatchObject({
       name: "IntegrationTransportError",
       code: "INTEGRATION_NETWORK_ERROR",
+      correlationId: new Headers(fetchMock.mock.calls[0]?.[1].headers).get(
+        "x-correlation-id",
+      ),
     });
   });
 
   it("rejects non-JSON gateway responses with their HTTP status", async () => {
     useLoopback();
-    vi.stubGlobal(
-      "fetch",
-      vi
-        .fn()
-        .mockResolvedValue(
-          new Response("<html>bad gateway</html>", { status: 502 }),
-        ),
-    );
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        new Response("<html>bad gateway</html>", { status: 502 }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
     const error = await new DingjiangIntegrationClient()
       .getProjectState("PRJ-1")
       .catch((value: unknown) => value);
     expect(error).toBeInstanceOf(IntegrationTransportError);
-    expect(error).toMatchObject({ code: "INTEGRATION_INVALID_RESPONSE" });
+    expect(error).toMatchObject({
+      code: "INTEGRATION_INVALID_RESPONSE",
+      correlationId: new Headers(fetchMock.mock.calls[0]?.[1].headers).get(
+        "x-correlation-id",
+      ),
+    });
     expect((error as Error).message).toContain("502");
   });
 
   it("does not mistake a contract-mismatched success payload for invalid caller input", async () => {
     useLoopback();
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue(
-        new Response(JSON.stringify({ ok: true, data: { unexpected: true } }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        }),
-      ),
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ok: true, data: { unexpected: true } }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
     );
+    vi.stubGlobal("fetch", fetchMock);
     const error = await new DingjiangIntegrationClient()
       .getProjectState("PRJ-1")
       .catch((value: unknown) => value);
     expect(error).toBeInstanceOf(IntegrationTransportError);
-    expect(error).toMatchObject({ code: "INTEGRATION_INVALID_RESPONSE" });
+    expect(error).toMatchObject({
+      code: "INTEGRATION_INVALID_RESPONSE",
+      correlationId: new Headers(fetchMock.mock.calls[0]?.[1].headers).get(
+        "x-correlation-id",
+      ),
+    });
   });
 
   it("revalidates the base URL when the environment changes", async () => {

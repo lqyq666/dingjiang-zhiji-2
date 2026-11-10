@@ -40,7 +40,11 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 
 export class IntegrationClientError extends Error {
-  constructor(readonly failure: IntegrationFailureEnvelope) {
+  constructor(
+    readonly failure: IntegrationFailureEnvelope,
+    readonly retryAfterSeconds?: number,
+    readonly requestCorrelationId?: string,
+  ) {
     super(failure.error.message);
     this.name = "IntegrationClientError";
   }
@@ -58,13 +62,16 @@ export type IntegrationTransportCode =
  * which blamed the caller for a server/contract mismatch.
  */
 export class IntegrationTransportError extends Error {
+  readonly correlationId?: string;
+
   constructor(
     readonly code: IntegrationTransportCode,
     message: string,
-    options?: { cause?: unknown },
+    options?: ErrorOptions & { correlationId?: string },
   ) {
     super(message, options);
     this.name = "IntegrationTransportError";
+    this.correlationId = options?.correlationId;
   }
 }
 
@@ -79,25 +86,30 @@ export const resolveTimeoutMs = (
   return Math.min(Math.max(parsed, 100), 120_000);
 };
 
-const classifyFetchError = (error: unknown): IntegrationTransportError => {
-  if (error instanceof IntegrationTransportError) return error;
+const classifyFetchError = (
+  error: unknown,
+  correlationId: string,
+): IntegrationTransportError => {
   const name = error instanceof Error ? error.name : "";
   if (name === "TimeoutError" || name === "AbortError")
     return new IntegrationTransportError(
       "INTEGRATION_TIMEOUT",
-      "Integration API 请求超时；不得改 requestId 重试，必须复用原请求核对服务端状态",
-      { cause: error },
+      "Integration API 请求超时。不得改 requestId 重试，必须复用原请求核对服务端状态",
+      { cause: error, correlationId },
     );
   return new IntegrationTransportError(
     "INTEGRATION_NETWORK_ERROR",
     "无法连接 Integration API；请确认本地服务已启动且 DINGJIANG_API_BASE_URL 配置正确",
-    { cause: error },
+    { cause: error, correlationId },
   );
 };
 
-const readJsonPayload = async (response: Response): Promise<unknown> => {
+const readJsonPayload = async (
+  response: Response,
+  correlationId: string,
+): Promise<unknown> => {
   const text = await response.text().catch((error: unknown) => {
-    throw classifyFetchError(error);
+    throw classifyFetchError(error, correlationId);
   });
   if (!text.trim()) return null;
   try {
@@ -106,8 +118,60 @@ const readJsonPayload = async (response: Response): Promise<unknown> => {
     throw new IntegrationTransportError(
       "INTEGRATION_INVALID_RESPONSE",
       `Integration API 未返回 JSON 响应（HTTP ${response.status}）`,
+      { correlationId },
     );
   }
+};
+
+// RFC 9110 permits delay-seconds and three HTTP-date formats.
+const parseRetryAfter = (value: string | null): number | undefined => {
+  if (!value) return undefined;
+  if (/^\d+$/.test(value)) {
+    const seconds = Number(value);
+    return Number.isSafeInteger(seconds) ? seconds : undefined;
+  }
+
+  const now = Date.now();
+  // Normalize the obsolete formats before validating calendar fields and weekday.
+  const date = value
+    .replace(
+      /^(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday), (\d{2})-([A-Z][a-z]{2})-(\d{2}) (\d{2}:\d{2}:\d{2}) GMT$/,
+      (
+        _,
+        weekday: string,
+        day: string,
+        month: string,
+        shortYear: string,
+        time: string,
+      ) => {
+        const limit = new Date(now);
+        limit.setUTCFullYear(limit.getUTCFullYear() + 50);
+        const suffix = Number(shortYear);
+        const year =
+          Math.floor((limit.getUTCFullYear() - suffix) / 100) * 100 + suffix;
+        const format = (fullYear: number) =>
+          `${weekday.slice(0, 3)}, ${day} ${month} ${fullYear} ${time} GMT`;
+        return Date.parse(format(year)) > limit.getTime()
+          ? format(year - 100)
+          : format(year);
+      },
+    )
+    .replace(
+      /^([A-Z][a-z]{2}) ([A-Z][a-z]{2}) ( \d|\d{2}) (\d{2}:\d{2}:\d{2}) (\d{4})$/,
+      (
+        _,
+        weekday: string,
+        month: string,
+        day: string,
+        time: string,
+        year: string,
+      ) =>
+        `${weekday}, ${day.trimStart().padStart(2, "0")} ${month} ${year} ${time} GMT`,
+    );
+  const timestamp = Date.parse(date);
+  if (!Number.isFinite(timestamp) || new Date(timestamp).toUTCString() !== date)
+    return undefined;
+  return Math.max(0, Math.ceil((timestamp - now) / 1000));
 };
 
 // Validating a URL on every call was repeated work on the hot path. The cache is
@@ -165,6 +229,7 @@ export class DingjiangIntegrationClient {
     // Configuration errors must keep their own message instead of being
     // reclassified as network failures.
     const token = this.boundToken ?? apiToken();
+    const correlationId = options.correlationId ?? randomUUID();
     const timeout = AbortSignal.timeout(resolveTimeoutMs());
     const signal =
       options.method === "GET" && this.readSignal
@@ -176,7 +241,7 @@ export class DingjiangIntegrationClient {
       headers: {
         accept: "application/json",
         authorization: `Bearer ${token}`,
-        "x-correlation-id": options.correlationId ?? randomUUID(),
+        "x-correlation-id": correlationId,
         ...(options.body === undefined
           ? {}
           : { "content-type": "application/json" }),
@@ -186,15 +251,23 @@ export class DingjiangIntegrationClient {
         : { body: JSON.stringify(options.body) }),
       signal,
     }).catch((error: unknown) => {
-      throw classifyFetchError(error);
+      throw classifyFetchError(error, correlationId);
     });
-    const payload = await readJsonPayload(response);
+    const payload = await readJsonPayload(response, correlationId);
     if (!response.ok) {
       const failure = integrationFailureEnvelopeSchema.safeParse(payload);
-      if (failure.success) throw new IntegrationClientError(failure.data);
+      if (failure.success)
+        throw new IntegrationClientError(
+          failure.data,
+          parseRetryAfter(response.headers.get("retry-after")),
+          failure.data.correlationId === correlationId
+            ? undefined
+            : correlationId,
+        );
       throw new IntegrationTransportError(
         "INTEGRATION_INVALID_RESPONSE",
         `Integration API 请求失败（HTTP ${response.status}），且未返回标准 failure envelope`,
+        { correlationId },
       );
     }
     try {
@@ -204,7 +277,7 @@ export class DingjiangIntegrationClient {
         throw new IntegrationTransportError(
           "INTEGRATION_INVALID_RESPONSE",
           "Integration API 响应与 contract 不一致；请检查服务端与 MCP 的版本是否匹配",
-          { cause: error },
+          { cause: error, correlationId },
         );
       throw error;
     }

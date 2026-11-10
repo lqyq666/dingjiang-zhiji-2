@@ -123,7 +123,7 @@ const invokeTool = async (handler, name, args) => {
     };
     return {
       isError: true,
-      structured: payload,
+      structured: undefined,
       payload,
       text: JSON.stringify(payload),
     };
@@ -189,6 +189,8 @@ const runCase = async (testCase, revision) =>
         params: { protocolVersion: revision },
       });
     const result = await invokeTool(handler, testCase.tool, testCase.arguments);
+    if (result.isError && result.structured !== undefined)
+      return fail("工具失败携带了用于成功结果的 structuredContent");
 
     if (testCase.kind === "happy") {
       if (result.isError)

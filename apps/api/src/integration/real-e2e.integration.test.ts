@@ -3,10 +3,12 @@ import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { existsSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
 import { createInterface } from "node:readline";
 import { resolve } from "node:path";
 
 import {
+  governedCommandResultSchema,
   integrationEvidenceBundleSchema,
   integrationWorkContextSchema,
   integrationWorkspaceResumeSchema,
@@ -156,6 +158,7 @@ class McpProcess {
       unknown
     >;
     const isError = Boolean(result.isError);
+    if (isError) expect(result).not.toHaveProperty("structuredContent");
     return isError
       ? { failure: payload, isError }
       : { data: result.structuredContent, isError };
@@ -452,10 +455,12 @@ describe.skipIf(!run)(
     });
 
     it("rejects a governed write from a read-only identity", async () => {
+      const requestId = randomUUID();
+      const correlationId = randomUUID();
       const denied = await readOnlyMcp.call("work.execute", {
         projectId,
-        requestId: randomUUID(),
-        correlationId: randomUUID(),
+        requestId,
+        correlationId,
         expectedVersion: version,
         reason: "真实端到端测试越权尝试",
         payload: {
@@ -469,7 +474,15 @@ describe.skipIf(!run)(
         },
       });
       expect(denied.isError).toBe(true);
-      expect(denied.failure?.code).toBe("PERMISSION_DENIED");
+      expect(denied.failure).toMatchObject({
+        code: "PERMISSION_DENIED",
+        correlationId,
+      });
+      const rejectedReceipts = await pool.query(
+        "SELECT 1 FROM governed_command_receipts WHERE request_id = $1",
+        [requestId],
+      );
+      expect(rejectedReceipts.rowCount).toBe(0);
       // A permission denial is not something the model may retry its way out of.
       expect(denied.failure?.retryable).toBe(false);
       expect(denied.failure?.requiresHuman).toBe(true);
@@ -480,7 +493,7 @@ describe.skipIf(!run)(
       });
     });
 
-    it("blocks a write in the read-only process and preserves governed replay", async () => {
+    it("blocks read-only writes and replays a committed write whose response was lost", async () => {
       const requestId = randomUUID();
       const command = {
         projectId,
@@ -524,28 +537,104 @@ describe.skipIf(!run)(
         await readOnlyProcess.stop();
       }
 
-      const written = await modernMcp.call("work.execute", command);
-      expect(written.isError).toBe(false);
-      const receipt = written.data as { version: number; replayed: boolean };
-      expect(receipt.replayed).toBe(false);
-      expect(receipt.version).toBe(version + 1);
+      // The test-only loopback relay forwards the original command and drops
+      // the response only after receiving the committed receipt from the API.
+      let deliveredToRelay: unknown;
+      const relay = createServer(async (request, response) => {
+        try {
+          const chunks: Buffer[] = [];
+          for await (const chunk of request) chunks.push(Buffer.from(chunk));
+          const upstream = await fetch(
+            `${baseUrl}/integration/projects/${encodeURIComponent(projectId)}/operations`,
+            {
+              method: "POST",
+              headers: {
+                authorization: request.headers.authorization ?? "",
+                "content-type": "application/json",
+                "x-correlation-id": String(request.headers["x-correlation-id"]),
+              },
+              body: Buffer.concat(chunks),
+            },
+          );
+          deliveredToRelay = await upstream.json();
+          response.destroy();
+        } catch {
+          response.writeHead(502).end();
+        }
+      });
+      await new Promise<void>((resolve, reject) =>
+        relay.once("error", reject).listen(0, "127.0.0.1", resolve),
+      );
+      let lossyMcp: McpProcess | undefined;
+      try {
+        const address = relay.address();
+        if (!address || typeof address === "string")
+          throw new Error("No relay port");
+        lossyMcp = new McpProcess(
+          pmcToken,
+          `http://127.0.0.1:${address.port}/api`,
+          {
+            modern: true,
+          },
+        );
+        const lost = await lossyMcp.call("work.execute", command);
+        expect(lost.isError).toBe(true);
+        expect(lost.failure).toMatchObject({
+          code: "INTEGRATION_NETWORK_ERROR",
+          correlationId: command.correlationId,
+          retryable: false,
+        });
+        expect(deliveredToRelay).toMatchObject({
+          ok: true,
+          data: { requestId, version: version + 1, replayed: false },
+        });
+        const committed = await pool.query(
+          "SELECT result_version FROM governed_command_receipts WHERE request_id = $1",
+          [requestId],
+        );
+        expect(committed.rows).toEqual([{ result_version: version + 1 }]);
+        const beforeReplay = integrationWorkspaceResumeSchema.parse(
+          (await mcp.call("workspace.resume")).data,
+        );
+        expect(
+          beforeReplay.workItems.items.find((item) => item.id === workItemId)
+            ?.progressUpdate?.note,
+        ).toBe(command.payload.operation.note);
+        expect(lossyMcp.errorOutput).not.toContain(pmcToken);
+        record("授权写入已提交但响应未送达", {
+          工具错误: String(lost.failure?.code),
+          追踪编号与请求一致:
+            lost.failure?.correlationId === command.correlationId,
+          重放前数据库回执: committed.rowCount ?? 0,
+        });
+      } finally {
+        await lossyMcp?.stop();
+        relay.closeAllConnections();
+        await new Promise<void>((resolve) => relay.close(() => resolve()));
+      }
 
-      // Same requestId must return the original receipt instead of writing again.
       const replay = await mcp.call("work.execute", command);
       expect(replay.isError).toBe(false);
-      expect((replay.data as { replayed: boolean }).replayed).toBe(true);
-      expect((replay.data as { version: number }).version).toBe(
-        receipt.version,
-      );
+      const receipt = governedCommandResultSchema.parse(replay.data);
+      expect(receipt).toMatchObject({
+        requestId,
+        version: version + 1,
+        replayed: true,
+      });
 
       // A new requestId carrying the pre-write version must be refused.
+      const staleRequestId = randomUUID();
+      const staleCorrelationId = randomUUID();
       const stale = await modernMcp.call("work.execute", {
         ...command,
-        requestId: randomUUID(),
-        correlationId: randomUUID(),
+        requestId: staleRequestId,
+        correlationId: staleCorrelationId,
       });
       expect(stale.isError).toBe(true);
-      expect(stale.failure?.code).toBe("STALE_VERSION");
+      expect(stale.failure).toMatchObject({
+        code: "STALE_VERSION",
+        correlationId: staleCorrelationId,
+      });
 
       const persisted = await pool.query(
         "SELECT count(*)::int AS count FROM vs01_project_subtasks WHERE progress_note = $1",
@@ -557,11 +646,16 @@ describe.skipIf(!run)(
       // the replay is answered from the ledger and the stale attempt is refused
       // before it reaches it.
       const receipts = await pool.query(
-        "SELECT count(*)::int AS count, max(result_version)::int AS version FROM governed_command_receipts WHERE request_id = $1",
-        [requestId],
+        "SELECT count(*)::int AS count, max(result_version)::int AS version FROM governed_command_receipts WHERE request_id = ANY($1::uuid[])",
+        [[requestId, staleRequestId]],
       );
       expect(receipts.rows[0].count).toBe(1);
       expect(receipts.rows[0].version).toBe(version + 1);
+      const progressEvents = await pool.query(
+        "SELECT 1 FROM vs01_project_events WHERE project_id = $1 AND event_type = 'PROGRESS_SAVED' AND note = $2",
+        [projectId, command.payload.operation.note],
+      );
+      expect(progressEvents.rowCount).toBe(1);
 
       const reread = await mcp.call("workspace.resume");
       expect(reread.isError).toBe(false);
@@ -799,11 +893,14 @@ describe.skipIf(!run)(
         expect(
           limitedContext.context.project.latestConfirmedWorkpaper,
         ).toBeNull();
-        expect(await call(apiReadOnly, "work.execute", command)).toMatchObject({
-          result: {
-            isError: true,
-            structuredContent: { code: "PERMISSION_DENIED" },
-          },
+        const denied = (await call(apiReadOnly, "work.execute", command))
+          .result;
+        expect(denied).toMatchObject({ isError: true });
+        expect(denied).not.toHaveProperty("structuredContent");
+        const errorContent = denied?.content as Array<{ text: string }>;
+        expect(JSON.parse(errorContent[0]!.text)).toMatchObject({
+          code: "PERMISSION_DENIED",
+          correlationId: command.correlationId,
         });
         const receiptCount = async () =>
           (

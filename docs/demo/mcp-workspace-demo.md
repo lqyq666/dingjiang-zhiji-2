@@ -63,4 +63,12 @@ pnpm test:coverage
 pnpm demo:mcp
 ```
 
-候选版的 WorkBuddy 接入需要独立演示配置。现有 WorkBuddy 使用另一份本地运行目录，本次回放以独立进程验证候选构建。30 个自然语言任务保留为独立模型评测集，本次没有采集模型选工具结果。
+候选版的 WorkBuddy 接入需要独立演示配置。现有 WorkBuddy 使用另一份本地运行目录，上一轮回放以独立进程验证候选构建。自然语言任务的结果由独立的宿主运行记录给出。
+
+### 异常返回与写入恢复
+
+成功时 `structuredContent` 继续遵循工具的 `outputSchema`。工具执行失败时，宿主读取 `isError: true` 及 `content` 里的 JSON 文本。未知方法和未知工具仍按协议错误处理。
+
+API 的标准业务错误保留服务端 `correlationId`。如果与请求头不同，`requestCorrelationId` 保留实际发出的编号。超时、断连及无效响应使用原请求追踪号。合法的 `Retry-After` 秒数或 HTTP 日期会转换为 `retryAfterSeconds`，未知时省略该字段并说明等待时间未知。MCP 不自动重发。
+
+回放在测试专用的本地中转连接丢弃已提交命令的响应。重放前先检查数据库已有回执并回读进展，随后以原命令重放，验证最终只有一条进度事件和一条回执。版本冲突与权限拒绝不会追加写入。 [真实进程断连回归](../../apps/api/src/integration/real-e2e.integration.test.ts)

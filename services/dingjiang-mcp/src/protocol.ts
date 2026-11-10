@@ -55,7 +55,7 @@ export const serverInstructions = [
   "必须遵守：",
   `1. ${proposalInstruction}`,
   "2. 调用 work.execute / material.verify / evidence.confirm / workpaper.propose / material.create / evidence.propose 前，先读 work.operations 取得最新 expectedVersion 与 allowedActions，向用户展示具体影响并取得本次确认；confirmation 保存用户原话，不得代写。",
-  "3. 超时或网络错误不得更换 requestId 重试，必须复用原 requestId 核对服务端状态。",
+  "3. 写入结果未知时，用原 requestId 和原命令核对状态或安全重放。收到限流错误时遵守 retryAfterSeconds，等待时间未知时暂停调用。",
   "4. 方案定稿仅 OWNER，经验发布仅 EXPERT_REVIEWER；工具不因调用方声明而放宽角色。",
 ].join("\n");
 

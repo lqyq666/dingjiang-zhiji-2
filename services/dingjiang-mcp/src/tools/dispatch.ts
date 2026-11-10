@@ -61,18 +61,27 @@ export type IntegrationClient = Pick<
 >;
 
 const safeToolError = (error: unknown) => {
-  if (error instanceof IntegrationClientError)
+  if (error instanceof IntegrationClientError) {
+    const { failure, retryAfterSeconds, requestCorrelationId } = error;
+    const message =
+      failure.error.code === "RATE_LIMITED" && retryAfterSeconds === undefined
+        ? "请求过于频繁。等待时间未知，请暂停调用并稍后核对。"
+        : failure.error.message;
     return {
-      code: error.failure.error.code,
-      message: error.failure.error.message,
-      retryable: error.failure.error.retryable,
-      requiresHuman: error.failure.error.requiresHuman,
-      correlationId: error.failure.correlationId,
+      code: failure.error.code,
+      message,
+      retryable: failure.error.retryable,
+      requiresHuman: failure.error.requiresHuman,
+      correlationId: failure.correlationId,
+      requestCorrelationId,
+      retryAfterSeconds,
     };
+  }
   if (error instanceof IntegrationTransportError)
     return {
       code: error.code,
       message: error.message,
+      correlationId: error.correlationId,
       // Governed writes must be reconciled with the original requestId rather
       // than blindly retried, and a degraded transport needs a human to restore
       // the local service before any retry is meaningful.
@@ -86,12 +95,10 @@ const safeToolError = (error: unknown) => {
       retryable: false,
       requiresHuman: false,
     };
-  // Never echo an arbitrary exception message: it can carry file paths or
-  // internal identifiers straight into the host transcript. Callers get a
-  // stable code, and the API path already supplies a correlation id.
+  // Arbitrary exceptions can contain internal paths or credentials.
   return {
     code: "TOOL_UNAVAILABLE",
-    message: "MCP 工具调用失败；请按 correlationId 核对服务端日志",
+    message: "MCP 工具调用失败。请检查本机 MCP 日志。",
     retryable: false,
     requiresHuman: true,
   };
@@ -110,10 +117,12 @@ const errorResult = (payload: {
   retryable: boolean;
   requiresHuman: boolean;
   correlationId?: string;
+  requestCorrelationId?: string;
+  retryAfterSeconds?: number;
   limitBytes?: number;
 }) => ({
   content: [{ type: "text" as const, text: JSON.stringify(payload) }],
-  structuredContent: payload,
+  // The advertised outputSchema describes only a successful result.
   isError: true,
 });
 
@@ -316,15 +325,13 @@ export const callTool = async (
     )
       return result;
 
-    // Hosts validate structuredContent against the success schema even on errors.
-    const { content, isError } = errorResult({
+    return errorResult({
       code: "AGGREGATE_RESULT_TOO_LARGE",
       message: "聚合结果超过 512 KiB。请改用范围更小的只读工具查询所需部分。",
       limitBytes: MAX_AGGREGATE_RESULT_BYTES,
       retryable: false,
       requiresHuman: false,
     });
-    return { content, isError };
   } catch (error) {
     return errorResult(safeToolError(error));
   }

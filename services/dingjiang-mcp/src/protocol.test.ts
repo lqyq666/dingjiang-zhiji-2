@@ -1,3 +1,4 @@
+import { createServer } from "node:http";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -8,7 +9,11 @@ import {
   type IntegrationClient,
   type ToolDescriptor,
 } from "./protocol";
-import { IntegrationClientError, IntegrationTransportError } from "./client";
+import {
+  DingjiangIntegrationClient,
+  IntegrationClientError,
+  IntegrationTransportError,
+} from "./client";
 
 const modernMeta = {
   "io.modelcontextprotocol/protocolVersion": "2026-07-28",
@@ -311,7 +316,7 @@ const client = (): IntegrationClient => ({
 
 const callFixtureTool = async (
   name: string,
-  integration = client(),
+  integration: IntegrationClient = client(),
   _meta?: typeof modernMeta,
 ) => {
   const response = await createMcpHandler(integration)({
@@ -332,6 +337,78 @@ const callFixtureTool = async (
     isError?: boolean;
   };
 };
+
+describe("HTTP failures delivered to the host", () => {
+  it.each([
+    { revision: "legacy", meta: undefined, retryAfter: "45", seconds: 45 },
+    { revision: "modern", meta: modernMeta, retryAfter: "45", seconds: 45 },
+    { revision: "modern", meta: modernMeta, retryAfter: "45 seconds" },
+  ])(
+    "$revision delivers a real 429 with Retry-After $retryAfter as error content",
+    async ({ meta, retryAfter, seconds }) => {
+      const serverCorrelationId = "6f1c2f7e-1111-4222-8333-444455556666";
+      const requestIds: unknown[] = [];
+      const server = createServer((request, response) => {
+        requestIds.push(request.headers["x-correlation-id"]);
+        response.writeHead(429, {
+          "content-type": "application/json",
+          "Retry-After": retryAfter,
+        });
+        response.end(
+          JSON.stringify({
+            ok: false,
+            error: {
+              code: "RATE_LIMITED",
+              message: "请求过于频繁，请按 Retry-After 重试",
+              retryable: true,
+              requiresHuman: false,
+            },
+            correlationId: serverCorrelationId,
+          }),
+        );
+      });
+      try {
+        await new Promise<void>((resolve, reject) =>
+          server.once("error", reject).listen(0, "127.0.0.1", resolve),
+        );
+        const address = server.address();
+        if (!address || typeof address === "string")
+          throw new Error("No test port");
+        vi.stubEnv(
+          "DINGJIANG_API_BASE_URL",
+          `http://127.0.0.1:${address.port}/api`,
+        );
+
+        const result = await callFixtureTool(
+          "workspace.resume",
+          new DingjiangIntegrationClient(undefined, "fixture-token"),
+          meta,
+        );
+        expect(requestIds).toEqual([expect.stringMatching(/^[\da-f-]{36}$/i)]);
+        expect(result.isError).toBe(true);
+        expect(result).not.toHaveProperty("structuredContent");
+        const failure = JSON.parse(result.content[0]!.text);
+        expect(failure).toMatchObject({
+          code: "RATE_LIMITED",
+          retryable: true,
+          correlationId: serverCorrelationId,
+          requestCorrelationId: requestIds[0],
+        });
+        if (seconds === undefined) {
+          expect(failure).not.toHaveProperty("retryAfterSeconds");
+          expect(failure.message).toContain("等待时间未知");
+        } else {
+          expect(failure.retryAfterSeconds).toBe(seconds);
+        }
+        expect(JSON.stringify(result)).not.toContain("fixture-token");
+      } finally {
+        vi.unstubAllEnvs();
+        server.closeAllConnections();
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+      }
+    },
+  );
+});
 
 describe("aggregate tool outputs", () => {
   it("keeps work items and traceable evidence while removing duplicate workspace fields", async () => {
@@ -891,7 +968,10 @@ describe("dingjiang-mcp protocol", () => {
       }
     ).result;
     expect(result.content[0]?.text ?? "").not.toContain("/home/operator");
-    expect(result.structuredContent?.code).toBe("TOOL_UNAVAILABLE");
+    expect(result).not.toHaveProperty("structuredContent");
+    expect(JSON.parse(result.content[0]!.text)).toMatchObject({
+      code: "TOOL_UNAVAILABLE",
+    });
   });
 
   it.each(["nope.nope", "__proto__", "constructor"])(
@@ -1320,14 +1400,19 @@ describe("dingjiang-mcp protocol", () => {
 describe("dingjiang-mcp transport error surface", () => {
   it("classifies transport failures separately from caller input errors", async () => {
     const integration = client();
-    integration.getProjectState = vi
-      .fn()
-      .mockRejectedValue(
-        new IntegrationTransportError(
-          "INTEGRATION_TIMEOUT",
-          "Integration API 请求超时；不得改 requestId 重试",
-        ),
-      );
+    const correlationId = "6f1c2f7e-1111-4222-8333-444455556666";
+    integration.getProjectState = vi.fn().mockRejectedValue(
+      new IntegrationTransportError(
+        "INTEGRATION_TIMEOUT",
+        "Integration API 请求超时。不得改 requestId 重试",
+        {
+          correlationId,
+          cause: new Error(
+            "Bearer fixture-token; /internal/path; synthetic-material",
+          ),
+        },
+      ),
+    );
     const response = await createMcpHandler(integration)({
       jsonrpc: "2.0",
       id: "transport-timeout",
@@ -1344,12 +1429,17 @@ describe("dingjiang-mcp transport error surface", () => {
     >;
     expect(payload).toMatchObject({
       code: "INTEGRATION_TIMEOUT",
+      correlationId,
       retryable: false,
       requiresHuman: true,
     });
     const text = JSON.stringify(response);
     expect(text).not.toContain("TOOL_UNAVAILABLE");
     expect(text).not.toContain("INVALID_REQUEST");
+    expect(text).not.toMatch(
+      /fixture-token|\/internal\/path|synthetic-material/,
+    );
+    expect(result).not.toHaveProperty("structuredContent");
   });
 });
 
@@ -1374,7 +1464,8 @@ describe("dingjiang-mcp optional constituents", () => {
       );
       const result = await callFixtureTool("workspace.resume", integration);
       expect(result.isError).toBe(true);
-      expect(result.structuredContent).toMatchObject({ code });
+      expect(result).not.toHaveProperty("structuredContent");
+      expect(JSON.parse(result.content[0]!.text)).toMatchObject({ code });
       expect(integration.listProjects).not.toHaveBeenCalled();
     },
   );
@@ -1419,7 +1510,8 @@ describe("dingjiang-mcp optional constituents", () => {
       );
       const result = await callFixtureTool("evidence.bundle", integration);
       expect(result.isError).toBe(true);
-      expect(result.structuredContent).toMatchObject({ code });
+      expect(result).not.toHaveProperty("structuredContent");
+      expect(JSON.parse(result.content[0]!.text)).toMatchObject({ code });
       expect(integration.getValidationWorkpaper).not.toHaveBeenCalled();
     },
   );
