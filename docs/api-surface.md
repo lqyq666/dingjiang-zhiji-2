@@ -3,7 +3,7 @@
 本文件由 `node scripts/docs/api-surface.mjs` 从控制器源码生成，请勿手工编辑。
 `tooling/architecture/api-surface.test.ts` 会在每次测试时核对它与代码是否一致。
 
-共 85 个路由。
+共 89 个路由。
 
 ## AssistantController
 
@@ -46,11 +46,14 @@
 | POST | `/api/integration/projects/:id/operations`                         | `executeWork`         |
 | GET  | `/api/integration/projects/:id/evidence/proposals`                 | `evidenceProposals`   |
 | POST | `/api/integration/projects/:id/evidence/confirmation`              | `confirmEvidence`     |
+| GET  | `/api/integration/workspace/resume`                                | `workspaceResume`     |
 | GET  | `/api/integration/projects`                                        | `projects`            |
 | GET  | `/api/integration/projects/current`                                | `currentProject`      |
 | GET  | `/api/integration/projects/current/work-item`                      | `currentWorkItem`     |
 | GET  | `/api/integration/projects/:id/context`                            | `projectContext`      |
 | GET  | `/api/integration/projects/:id/state`                              | `projectState`        |
+| GET  | `/api/integration/projects/:id/work-context`                       | `workContext`         |
+| GET  | `/api/integration/projects/:id/evidence-bundle`                    | `evidenceBundle`      |
 | GET  | `/api/integration/projects/:id/next-action`                        | `nextAction`          |
 | GET  | `/api/integration/projects/:id/evidence`                           | `evidence`            |
 | GET  | `/api/integration/projects/:id/materials`                          | `materials`           |

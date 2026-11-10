@@ -1,20 +1,47 @@
-# 零依赖 MCP 协议实现
+# MCP 协议与接入
 
-这是一份实现说明，不是使用说明。它讲这个 server 为什么不用官方 SDK、四个协议方法各自怎么落地、哪些东西是故意不做的，以及怎么证明它是对的。使用与配置见 [README.md](README.md)。
+使用与配置见 [README.md](README.md)。
 
-## 1. 为什么不用官方 SDK
+## 实际调用链
 
-运行时依赖只有 `zod` 和内部契约包，没有 `@modelcontextprotocol/sdk`。这不是姿态，是三个具体判断：
+```mermaid
+flowchart LR
+  host["WorkBuddy / IDE<br/>模型与 MCP Client"]
+  mcp["鼎江 MCP Server<br/>工具发现、校验、转接"]
+  api["鼎江业务 API · NestJS<br/>权限、业务规则、审计"]
+  db["PostgreSQL<br/>项目、证据、回执"]
+  web["Web 应用<br/>人工操作与状态回读"]
+  idp["OAuth 发行方<br/>授权与发放令牌"]
 
-| 判断               | 依据                                                                                                                                         |
-| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| 协议面只有四个方法 | `initialize` / `ping` / `tools/list` / `tools/call`。SDK 附带的 resources、prompts、sampling、elicitation 我们不用，却要跟着它的版本节奏升级 |
-| 治理语义长在协议上 | `annotations`、`outputSchema`、`instructions` 的取值全部来自业务契约。SDK 只提供挂载点，不减少这部分工作                                     |
-| 传输只有 stdio     | SDK 的多传输抽象在这里是没有调用者的代码                                                                                                     |
+  host <-->|"MCP · stdio / Streamable HTTPS<br/>JSON-RPC 2.0"| mcp
+  host <-->|"OAuth · 授权码 + PKCE"| idp
+  mcp -->|"HTTPS · 获取 JWKS"| idp
+  mcp <-->|"HTTP(S) JSON · Bearer<br/>/api/integration/*"| api
+  api <-->|"SQL<br/>PostgreSQL 协议"| db
+  web <-->|"HTTP(S) JSON<br/>/api/vs01/* 等"| api
 
-代价也要说清：协议演进要自己跟。当前只在 `session-profile.ts` 里声明 `2025-06-18` 一个常量，将来升级是改一处常量加一处回包，而不是改一套框架调用；反过来，如果某天要同时支持两个修订版，就得自己补版本分支——这个成本是被明确接受的。
+  classDef mcpLayer fill:#e8f5f2,stroke:#298578,color:#123c37,stroke-width:1.5px
+  class mcp mcpLayer
+```
 
-## 2. 一次会话的完整往返
+宿主用模型选择工具。MCP 校验调用并转交 Integration API，由 API 核验身份和项目权限、执行业务规则。Web 通过自己的业务接口回读同一份 PostgreSQL 记录。
+
+## 1. 版本与传输
+
+| 版本         | 发现和调用                                               |
+| ------------ | -------------------------------------------------------- |
+| `2025-06-18` | `initialize` 握手，然后调用 `tools/list` 与 `tools/call` |
+| `2026-07-28` | 可先调用 `server/discover`，每个请求携带版本与能力       |
+
+同一 stdio 入口沿用有界队列与按序响应。两个版本共享工具注册和业务分发。远程入口用官方 TypeScript SDK v2 处理 HTTP 传输与协议校验。 [MCP 版本兼容规范](https://modelcontextprotocol.io/specification/2026-07-28/basic/versioning) · [TypeScript SDK v2](https://ts.sdk.modelcontextprotocol.io/v2/protocol-versions)
+
+### Streamable HTTP 与 OAuth
+
+`server-http.ts` 将单个 `/mcp` 端点接到 SDK 的逐请求处理器。入口校验公开地址对应的 Host 和 Origin，再验证 OAuth Bearer。SDK 按请求校验 HTTP 头与 JSON-RPC 元数据。常规工具请求返回 JSON，每个请求独立处理。
+
+HTTP 入口发布 RFC 9728 资源元数据，`oauth.ts` 生成授权挑战并验证访问令牌。验证通过后，HTTP 处理器按签名后的主体选取 Integration 令牌，用它调用业务 API。OAuth 的读写范围限定本次工具面，API 再检查角色、项目、版本、幂等和审计规则。 [Streamable HTTP](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/streamable-http) · [OAuth 授权规范](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization)
+
+## 2. stdio 会话的完整往返
 
 ```mermaid
 sequenceDiagram
@@ -24,14 +51,22 @@ sequenceDiagram
   participant A as 业务 API
   participant D as PostgreSQL
 
-  H->>S: initialize(protocolVersion, clientInfo)
-  Note over S: 协商版本 2025-06-18<br/>建会话档案 · 记 buildIdentity
-  S-->>H: protocolVersion + capabilities + serverInfo + instructions
+  Note over S: 启动时固定工具面、只读策略与 buildIdentity
+  alt 2025-06-18
+    H->>S: initialize(protocolVersion, clientInfo)
+    S-->>H: protocolVersion + capabilities + serverInfo + instructions
+  else 2026-07-28
+    opt 预先发现能力
+      H->>S: server/discover(params._meta)
+      S-->>H: supportedVersions + capabilities + instructions
+    end
+    Note over H,S: 每个请求在 _meta 携带版本与客户端能力
+  end
   H->>S: tools/list
   Note over S: 注册表 → 有序视图<br/>校验 annotations 与 outputSchema 完备
-  S-->>H: tools[]（13 或 23 个，顺序固定）
+  S-->>H: tools[]（常规 13 或 23，只读 7 或 17）
   H->>S: tools/call(name, arguments)
-  Note over S: 信封 passthrough → 参数 strict → 分发
+  Note over S: 校验 JSON-RPC 信封 → 检查只读策略 → 校验工具参数
   S->>A: HTTP + bearer（身份由令牌绑定，不在参数里）
   A->>D: 带 RLS 的查询
   D-->>A: 行
@@ -40,11 +75,11 @@ sequenceDiagram
   S-->>H: 结果，或 isError + code + correlationId
 ```
 
-## 3. 四个方法各自解决什么
+## 3. 协议方法
 
-### `initialize`
+### `initialize`（2025-06-18）
 
-回包四个字段，每个都有明确用途：
+握手回包包含协议版本、服务端信息、工具能力和治理说明。
 
 ```json
 {
@@ -59,10 +94,16 @@ sequenceDiagram
 }
 ```
 
-- `capabilities` 只声明 tools，且 `listChanged: false`：工具面只在部署时变更，不假装能推送更新。
+- `capabilities` 声明 tools 和 `listChanged: false`。工具面随进程启动配置固定。
 - `buildIdentity` 是进程启动时记下的构建标记。每次请求都会比对当前部署，变了就返回 `SESSION_MCP_PROCESS_STALE` 并建议新建会话——否则宿主会拿着旧进程的工具清单继续调用一个已经换过的服务端。
-- `instructions` 是这段实现里最不"协议"的部分：它把「AI 输出恒为 PROPOSAL」「写前必读 `work.operations`」「超时复用 `requestId`」这些业务规则作为协议内容交给宿主放进模型上下文。规范允许这样做，但多数实现只把它当欢迎语。
-- 重复 `initialize` 幂等：第二次握手返回第一次协商的结果。宿主重试握手是正常的，但静默改变已承诺的工具面不是。
+- `instructions` 向宿主说明 `PROPOSAL` 与业务事实的边界。常规模式给出写前确认和重试规则，只读模式提示宿主引用工具返回的来源定位。
+- 重复 `initialize` 返回同一份协议版本和能力声明。
+
+### `server/discover`（2026-07-28）
+
+客户端可先调用 `server/discover` 读取 `supportedVersions`、工具能力和治理说明，也可以直接发 `tools/list` 或 `tools/call`。每个新版请求都需在 `params._meta` 中提供 `io.modelcontextprotocol/protocolVersion` 和 `io.modelcontextprotocol/clientCapabilities`。客户端身份元数据用于描述调用方，业务授权由 Integration API 按 Bearer 令牌判断。
+
+新版结果包含 `resultType: "complete"` 和 `_meta["io.modelcontextprotocol/serverInfo"]`。发现和工具清单以 `ttlMs: 0`、`cacheScope: "private"` 返回，宿主每次从当前进程读取实际开放的工具面。
 
 ### `tools/list`
 
@@ -70,21 +111,21 @@ sequenceDiagram
 
 工具不是运行时拼的：`toolRegistry` 里每个工具只有一份定义，`business` 与 `compatibility` 是两个有序名单，映射到同一批 `ToolDescriptor` 实例。共享工具在两个面里是同一个对象，改一处不会只改到一面。
 
-`dispatchedToolNames` 故意不从这个注册表生成。它是 `callTool` 分发分支的独立手写镜像，`tool-contract.test.ts` 拿它和声明集做双向比对——如果让它自动派生，这条守卫就变成了自己和自己比，永远为真。
+`tool-contract.test.ts` 双向比对工具声明和实际处理器的名称，并通过 `tools/call` 逐个验证可达性。
 
 ### `tools/call`
 
-三层结构，顺序不能换：
+`tools/call` 按以下顺序处理。
 
-1. **信封**：`{ name, arguments }` 用 `passthrough()` 校验——多出来的字段不拒绝，因为宿主可能附加 `_meta` 之类的传输层信息。
-2. **参数**：每个工具的 `inputSchema` 都由 Zod `.strict()` 契约生成，未知字段直接拒绝。权限与项目范围**不在参数里**，全部来自服务端按令牌绑定的身份，工具无法通过传参伪造。
-3. **分发**：`switch` 落到具体实现；未登记的名字返回 `UNKNOWN_TOOL`，而不是静默成功。
+1. JSON-RPC 层校验请求信封，并按新版规则检查 `_meta`。工具名和业务参数分别来自 `name` 与 `arguments`。
+2. 检查当前进程的只读策略，再按名称分发。只读模式拦截的写工具与未注册的名称均返回 `-32602` 和 `UNKNOWN_TOOL`。
+3. 处理器用严格的 Zod 契约校验 `arguments`，拒绝未知字段。权限与项目范围来自服务端按令牌绑定的身份。
 
-成功回包同时给 `content`（文本，给只读文本的宿主）和 `structuredContent`（结构化，给能校验契约的宿主）。这是有意的冗余：MCP 规范要求 `content` 必填，只给结构化内容会让一部分宿主拿不到数据。
+成功回包同时给 `content` 和 `structuredContent`，供宿主显示文本或校验、处理结构化结果。
 
 ### `ping` 与通知
 
-`ping` 返回空对象。所有通知（`id` 缺失的请求）直接忽略、不回复——包括 `notifications/initialized`。规范没有要求服务端对通知做回执，忽略是合规的；代价是当前不处理 `notifications/cancelled`，这一点在「故意不做」里说明。
+`ping` 是旧版的探活方法，返回空对象。两种协议的 `notifications/cancelled` 都按 `params.requestId` 找到尚未回包的只读请求。通知自身无需回执，其余通知由服务端忽略。
 
 ## 4. JSON-RPC 的错误面
 
@@ -95,37 +136,38 @@ sequenceDiagram
 | 信封非法       | `-32600` + `INVALID_ENVELOPE` / `INVALID_ID` | 非对象、id 非标量、`jsonrpc` 不是 `"2.0"`、`method` 非字符串——在分发前拒绝     |
 | 未知方法       | `-32601`                                     |                                                                                |
 | 参数不是对象   | `-32602` + `INVALID_PARAMS`                  | `params` 只能是对象或省略                                                      |
-| 参数校验失败   | `-32602`                                     | 只有 Zod 参数错误映射到这里                                                    |
+| 新版元数据非法 | `-32602` + `INVALID_PROTOCOL_META`           | 逐请求版本与能力字段需有效                                                     |
+| 新版版本不支持 | `-32022`                                     | `data` 返回 `requested` 与 `supported`                                         |
+| 工具入参非法   | `isError: true` + `INVALID_REQUEST`          | 已找到工具，入参未通过该工具的 Zod 契约                                        |
 | 未知工具名     | `-32602` + `UNKNOWN_TOOL`                    | 与「工具执行失败」分开：后者是结果里的 `isError`，前者是这个请求根本不该被分发 |
 | handler 抛异常 | `-32603` + `HANDLER_FAILURE`                 | 诊断写 stderr，不进协议流，也不中断后续请求                                    |
 
-业务失败**不**占 JSON-RPC 错误码，而是放在结果里：`isError: true` + `structuredContent.code`。这样宿主能同时拿到机器可读的 `code`、`retryable`、`requiresHuman`，以及服务端的 `correlationId`。错误分类按固定顺序判定：
+业务失败通过 `isError: true` 和文本 JSON 交付 `code`、`retryable`、`requiresHuman` 以及 API 提供的 `correlationId`。常规工具错误也提供 `structuredContent`。以下是错误分类的判定顺序。
 
-| 类型                        | 含义                                 | 是否保留原文                             |
-| --------------------------- | ------------------------------------ | ---------------------------------------- |
-| `IntegrationClientError`    | 服务端返回的标准 failure envelope    | 保留（服务端消息可信）                   |
-| `IntegrationTransportError` | 超时 / 网络 / 响应与契约不一致       | 保留（我们自己写的文案）                 |
-| `ZodError`                  | 入参不符合契约                       | 固定文案                                 |
-| `ToolRefusal`               | 可预期的业务拒绝，如 `CONTEXT_DRIFT` | 保留（消息由我们定义）                   |
-| 其它异常                    | 未预期                               | **不保留**，只给固定文案 + correlationId |
+| 类型                        | 含义                              | 是否保留原文                             |
+| --------------------------- | --------------------------------- | ---------------------------------------- |
+| `IntegrationClientError`    | 服务端返回的标准 failure envelope | 保留（服务端消息可信）                   |
+| `IntegrationTransportError` | 超时 / 网络 / 响应与契约不一致    | 保留（我们自己写的文案）                 |
+| `ZodError`                  | 入参不符合契约                    | 固定文案                                 |
+| 其它异常                    | 未预期                            | **不保留**，只给固定文案 + correlationId |
 
 最后一行是刻意的：任意异常的 message 可能带出文件路径或内部标识，直接回给宿主等于把它们写进对话记录。
 
-## 5. stdio 的五个决定
+## 5. stdio 的队列与响应
 
-`stdio.ts` 只有 102 行，但每个决定都对应一类线上事故：
+`stdio.ts` 负责调度请求、限制待处理数量和写出响应。
 
-1. **串行执行**：所有请求排进一条 Promise 链，受治理写永不并发，响应顺序与请求顺序一致。
-2. **失败不毒化队列**：`queue.then(execute, execute)`——上一行抛错后，下一行照常执行。
-3. **解析前限流**：超限行返回 `REQUEST_TOO_LARGE`，不做 `JSON.parse`。
-4. **诊断走 stderr**：`onError` 只拿到异常，协议流里只有 JSON-RPC 消息，不会因为一行日志破坏解析。
-5. **响应可 await**：`respond` 返回 Promise，stdout 背压时等待 `drain`，避免写入乱序。
+1. 相邻的只读工具调用最多并发 4 个。结果按入队顺序发出，写 stdout 时等待 `drain`。
+2. 初始化和受治理写入等串行请求等待前面的响应发出，后续读在串行请求完成后启动。
+3. 取消通知绕过队列。排队的读会跳过执行，运行中的读通过 `AbortSignal` 中止 HTTP 请求，尚未发出的读响应会丢弃。受治理写入继续执行并返回原回执。
+4. 队列默认接受 64 个未完成请求，包含等待发出的响应。额满时立即返回 `QUEUE_OVERFLOW`。单行长度在 JSON 解析前检查。
+5. handler 异常转换为 `HANDLER_FAILURE`，诊断写入 stderr。
 
 ## 6. 元数据不是抄出来的
 
 - `annotations` 覆盖全部工具，`readOnlyHint` 与「入参是否同时必填 `requestId` + `expectedVersion`」双向断言——受治理写不可能被标成只读。
-- `outputSchema` 有 28 个，直接取自 client 校验响应用的同一批 Zod schema（`z.toJSONSchema`），所以 `structuredContent` 与声明同构是构造出来的。三个聚合工具（`workspace.resume`、`work.context`、`evidence.bundle`）由多个 payload 拼装，契约是显式写的；返回前校验顶层字段齐全，因为拼装能出的错是漏字段，而子结构已由 client 在解析每个子响应时校验过。
-- `project.next_action` 相反，输出是本服务自建对象，于是定义显式 schema 并在返回前 `parse`，让 `classification` 不可能出现 `PROPOSAL` 以外的值。
+- 28 个工具均声明 `outputSchema`。三个聚合工具按发布的 Zod 契约裁剪结果，对包含 `structuredContent`、`content.text` 和新版协议元数据的完整 `result` 设 512 KiB 上限。超限以 `isError: true` 和文本 JSON 返回错误码。各工具保留的字段见 [工具说明](README.md)。
+- `project.next_action` 由业务 API 派生。MCP client 按共享契约校验响应，该契约要求 `classification` 为 `PROPOSAL`。
 
 ## 7. 故意不做
 
@@ -133,10 +175,8 @@ sequenceDiagram
 | --------------------------------- | --------------------------------------------------------------------------------------------------------- |
 | 协议版本表（曾支持 `2025-03-26`） | 没有真实客户端使用；一条没人走的兼容分支会让「会话承诺了什么」难以核对                                    |
 | `resources` / `prompts`           | 当前没有宿主消费它们；只声明不实现比不声明更糟                                                            |
-| `notifications/cancelled`         | 读可以接受取消，写不行；语义没想清楚前宁可不接                                                            |
 | `progress` 通知                   | 聚合工具最长也就数秒，进度条收益低于实现与测试成本                                                        |
 | `tools/list` 分页                 | 28 个工具远没到需要游标的量级                                                                             |
-| MCP 2026-07-28 无状态协议         | 主流宿主仍是 opt-in；现在实现等于维护两套逻辑                                                             |
 | 压缩 inputSchema                  | 6 个写工具共享同一套 governed envelope，重复是必然；用 `$ref` 省几 KB，赌所有客户端正确解析跨 schema 引用 |
 
 ## 8. 怎么证明它是对的
@@ -144,7 +184,9 @@ sequenceDiagram
 协议实现最怕"看起来对"。这里的做法是让每条不变量都有可执行的证据：
 
 - `evals/` 的 46 个用例直接驱动 `dist/` 里的真实 dispatcher，覆盖 happy path、越权注入、参数守卫、超时恢复、缺失降级与协议契约。
-- 会话矩阵把 40 个非协议用例在两套工具面上各跑一遍，断言两面给出同一套治理标注与拦截。
+- 两种协议与两套工具面组成四组矩阵，每组跑同一套 40 个契约用例。
+- 真实端到端测试同时启动旧版和新版 stdio MCP，新版写入后用旧版重放并回读同一条回执。
+- 远程端到端测试用本地 OAuth 发行方完成授权码与 PKCE，再经实际 MCP HTTP、Integration API 和 PostgreSQL 验证只读拦截、授权写入和回读。
 - `tool-contract.test.ts` 双向比对声明与实现，并检查 `annotations` 与入参契约是否一致。
 - 变异验证：删掉错误脱敏、忽略宿主档案、让视图返回副本而不共享实例——每一次都应有测试变红；没有变红的守卫等于没有守卫。
 
@@ -152,6 +194,7 @@ sequenceDiagram
 
 1. `endpoint-policy.ts`（67 行）：允许连哪个 API，为什么。
 2. `client.ts`（386 行）：三类错误的边界，响应如何按契约校验。
-3. `protocol.ts` 的 `toolGovernance` → `toolRegistry` → `callTool`：工具面怎么组装、怎么分发。
-4. `stdio.ts`（102 行）：传输层的五个决定。
-5. `protocol.ts` 的 `createMcpHandler`：会话状态、握手幂等、错误映射。
+3. `tools/schemas.ts` 和 `tools/catalog.ts` 定义工具的入参、输出、治理标注和有序清单。
+4. `tools/dispatch.ts` 按域执行工具，组装聚合结果并映射工具错误。
+5. `stdio.ts` 负责有界队列、请求解析与 stdout 背压。
+6. `protocol.ts` 负责会话状态、握手幂等和 JSON-RPC 错误。

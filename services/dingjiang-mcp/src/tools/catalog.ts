@@ -1,0 +1,689 @@
+import { z } from "zod";
+import {
+  emptyInput,
+  evidenceConfirmInput,
+  identifierInput,
+  materialVerifyInput,
+  outputSchemaFor,
+  workExecuteInput,
+  type JsonSchemaObject,
+} from "./schemas";
+
+export type ToolAnnotations = {
+  title: string;
+  readOnlyHint: boolean;
+  destructiveHint: boolean;
+  idempotentHint: boolean;
+  openWorldHint: boolean;
+};
+
+type ToolSeed = {
+  name: string;
+  description: string;
+  inputSchema: JsonSchemaObject;
+};
+
+export type ToolDescriptor = ToolSeed & {
+  annotations: ToolAnnotations;
+  outputSchema?: JsonSchemaObject;
+};
+
+type ToolKind = "read" | "governed-write";
+
+/**
+ * Governance classification per tool.
+ *
+ * Without annotations every tool inherits the protocol defaults
+ * (`readOnlyHint: false`, `destructiveHint: true`, `openWorldHint: true`), so a
+ * host cannot tell a GET-style lookup from a governed write: it either prompts
+ * before every read or — worse, if a write were mislabelled — skips the
+ * confirmation the whole model depends on. Classifying each tool explicitly is
+ * what makes the read/write boundary machine-readable.
+ */
+const toolGovernance = {
+  "workspace.events": { title: "列出授权事件与项目入口", kind: "read" },
+  "work.operations": { title: "读取操作版本与获准动作", kind: "read" },
+  "work.execute": { title: "记录进展、确认或提交方案", kind: "governed-write" },
+  "material.verify": { title: "记录材料人工核验", kind: "governed-write" },
+  "evidence.confirm": { title: "确认或驳回证据提案", kind: "governed-write" },
+  "workspace.resume": { title: "恢复当前项目全貌与下一动作", kind: "read" },
+  "work.context": { title: "读取项目工作上下文摘要", kind: "read" },
+  "evidence.bundle": { title: "读取证据包与材料核验", kind: "read" },
+  "experience.search": { title: "检索已发布正式经验", kind: "read" },
+  "project.next_action": { title: "派生唯一可解释的下一动作", kind: "read" },
+  list_projects: { title: "列出授权咨询项目", kind: "read" },
+  get_current_project: { title: "读取当前咨询项目", kind: "read" },
+  get_project_context: { title: "读取项目工作上下文", kind: "read" },
+  get_project_state: { title: "读取项目状态与阶段", kind: "read" },
+  get_current_work_item: { title: "读取当前事项", kind: "read" },
+  list_project_work_items: { title: "列出阶段事项", kind: "read" },
+  list_evidence: { title: "列出可追溯事实证据", kind: "read" },
+  list_traceable_materials: { title: "列出材料摘要与核验状态", kind: "read" },
+  get_material_preview: { title: "读取材料安全摘要", kind: "read" },
+  get_evidence: { title: "读取单条事实证据", kind: "read" },
+  get_source_version: { title: "解析来源版本定位", kind: "read" },
+  get_validation_workpaper: { title: "读取根因核验工作底稿", kind: "read" },
+  search_formal_experiences: { title: "检索正式经验", kind: "read" },
+  get_formal_experience: { title: "读取单条正式经验", kind: "read" },
+  get_experience_evidence: { title: "读取经验引用的证据定位", kind: "read" },
+  "workpaper.propose": {
+    title: "追加根因核验或分析 Proposal",
+    kind: "governed-write",
+  },
+  "material.create": { title: "登记待核验材料版本", kind: "governed-write" },
+  "evidence.propose": { title: "登记证据 Proposal", kind: "governed-write" },
+} as const satisfies Record<string, { title: string; kind: ToolKind }>;
+
+export const isReadOnlyTool = (name: string): boolean =>
+  Object.hasOwn(toolGovernance, name) &&
+  toolGovernance[name as keyof typeof toolGovernance].kind === "read";
+
+/**
+ * Fails closed: a tool that is listed without a governance classification
+ * cannot be given honest hints, and the safe default would be to label it
+ * destructive — which hides the real writes among a wall of false ones.
+ */
+const annotationsFor = (name: string): ToolAnnotations => {
+  const entry = toolGovernance[name as keyof typeof toolGovernance] as
+    { title: string; kind: ToolKind } | undefined;
+  if (!entry)
+    throw new Error(
+      `Missing tool governance metadata for ${name}; every tool must declare whether it reads or writes before it can be listed`,
+    );
+  const governedWrite = entry.kind === "governed-write";
+  return {
+    title: entry.title,
+    readOnlyHint: !governedWrite,
+    destructiveHint: governedWrite,
+    // Same requestId + expectedVersion replays into the same receipt, because
+    // the governed command contract makes requestId the idempotency key. That
+    // is also why a timeout must reuse the original requestId instead of
+    // minting a new one. Reads are trivially idempotent.
+    idempotentHint: true,
+    // Every tool reaches the first-party Integration API scoped to the caller's
+    // token. None of them browse the open web, so their output must not be
+    // treated as untrusted external content by the host.
+    openWorldHint: false,
+  };
+};
+
+/**
+ * Attaches governance metadata and the output contract to a declared tool.
+ * Applied at surface construction so the tool literals below stay readable
+ * schemas, and so a newly added tool cannot skip classification silently.
+ */
+const finalize = (tools: readonly ToolSeed[]): ToolDescriptor[] =>
+  tools.map((tool) => {
+    const outputSchema = outputSchemaFor(tool.name);
+    return {
+      ...tool,
+      annotations: annotationsFor(tool.name),
+      ...(outputSchema ? { outputSchema } : {}),
+    };
+  });
+
+const operationTools: ToolSeed[] = [
+  {
+    name: "workspace.events",
+    description:
+      "列出服务端明确授权的事件与项目入口，包含尚未建项事件的预留 projectId；只能使用返回的 ID。",
+    inputSchema: z.toJSONSchema(emptyInput),
+  },
+  {
+    name: "work.operations",
+    description:
+      "读取项目最新事实、操作版本与当前身份获准的动作。执行前必读；allowedActions 代表权限，实际执行仍检查阶段和完成条件。",
+    inputSchema: z.toJSONSchema(identifierInput),
+  },
+  {
+    name: "work.execute",
+    description:
+      "根据用户明确指令记录进展、确认事项或结果、提交方案/经验。先读取 work.operations，展示具体影响并取得本次用户确认；confirmation 保存用户原话。方案定稿仅 OWNER、经验发布仅 EXPERT_REVIEWER。所有字段由已知上下文组装，只询问缺少的实际事实。成功回执包含提交后的项目事实；超时不得改 requestId 重试，必须复用原请求核对。",
+    inputSchema: z.toJSONSchema(workExecuteInput),
+  },
+  {
+    name: "material.verify",
+    description:
+      "用户核对具体材料内容后，由有 material:verify 权限的 PMC 记录核验或退回。先展示内容与来源，不得以 AI 判断冒充人工核验。",
+    inputSchema: z.toJSONSchema(materialVerifyInput),
+  },
+  {
+    name: "evidence.confirm",
+    description:
+      "用户核对 evidence.bundle 中的原文、来源版本及证据提案后，由有 evidence:confirm 权限的 PMC 确认或驳回。不得自行把提案升级为事实。",
+    inputSchema: z.toJSONSchema(evidenceConfirmInput),
+  },
+];
+
+const compatibilitySeeds: ToolSeed[] = [
+  ...operationTools,
+  {
+    name: "list_projects",
+    description:
+      "列出当前服务端身份已授权的咨询项目，并返回服务端派生的当前项目。",
+    inputSchema: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "get_current_project",
+    description:
+      "读取当前服务端身份在授权集合中的当前咨询项目；调用方不能指定权限范围。",
+    inputSchema: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "get_project_context",
+    description:
+      "读取已授权咨询项目的完整只读工作上下文、事实、阶段、材料缺口和最近活动。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectId: { type: "string", minLength: 1, maxLength: 120 },
+      },
+      required: ["projectId"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "get_project_state",
+    description: "读取已授权咨询项目的当前状态、进度、阶段和经营结果状态。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectId: { type: "string", minLength: 1, maxLength: 120 },
+      },
+      required: ["projectId"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "get_current_work_item",
+    description: "读取当前授权项目中由服务端状态派生的唯一当前事项。",
+    inputSchema: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "list_project_work_items",
+    description: "列出已授权咨询项目的阶段事项及其输入、输出与完成事实。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectId: { type: "string", minLength: 1, maxLength: 120 },
+      },
+      required: ["projectId"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "list_evidence",
+    description: "列出已授权咨询项目来源任务中的可追溯事实证据。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectId: { type: "string", minLength: 1, maxLength: 120 },
+      },
+      required: ["projectId"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "list_traceable_materials",
+    description:
+      "列出已授权咨询项目的安全材料摘要与输入缺口；每条材料显式返回 verificationStatus，以及 latestVerificationAudit（最近人工核验的 eventType/version/actor/note/occurredAt，未核验时为 null）。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectId: { type: "string", minLength: 1, maxLength: 120 },
+      },
+      required: ["projectId"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "get_material_preview",
+    description:
+      "读取授权项目内一条材料的安全摘要、verificationStatus 与 latestVerificationAudit；不可读附件不返回原始 bytes 或存储键。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectId: { type: "string", minLength: 1, maxLength: 120 },
+        materialId: { type: "string", minLength: 1, maxLength: 120 },
+      },
+      required: ["projectId", "materialId"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "get_evidence",
+    description: "读取授权项目内一条可追溯事实证据。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectId: { type: "string", minLength: 1, maxLength: 120 },
+        evidenceId: { type: "string", minLength: 1, maxLength: 120 },
+      },
+      required: ["projectId", "evidenceId"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "get_source_version",
+    description:
+      "在授权项目范围内解析一个不可覆盖 SourceVersion 定位，不返回原始存储信息。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectId: { type: "string", minLength: 1, maxLength: 120 },
+        sourceVersionId: { type: "string", minLength: 1, maxLength: 160 },
+      },
+      required: ["projectId", "sourceVersionId"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "get_validation_workpaper",
+    description: "读取授权项目的根因核验工作底稿、版本历史和证据定位。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectId: { type: "string", minLength: 1, maxLength: 120 },
+      },
+      required: ["projectId"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "search_formal_experiences",
+    description: "检索已发布正式经验；返回内容只能作为 PROPOSAL 候选参考。",
+    inputSchema: {
+      type: "object",
+      properties: { query: { type: "string", maxLength: 200, default: "" } },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "get_formal_experience",
+    description: "读取一条已发布正式经验及其适用范围、限制和证据定位。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        experienceId: { type: "string", minLength: 1, maxLength: 120 },
+      },
+      required: ["experienceId"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "get_experience_evidence",
+    description: "读取一条正式经验所引用的来源结果证据定位。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        experienceId: { type: "string", minLength: 1, maxLength: 120 },
+      },
+      required: ["experienceId"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "material.create",
+    description:
+      "由 PMC 在授权项目与事项中登记一条待核验材料并形成不可覆盖版本；不会创建 Evidence、推进事项或确认业务结论。首版不上传文件。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectId: { type: "string", minLength: 1, maxLength: 120 },
+        requestId: { type: "string", format: "uuid" },
+        expectedVersion: { type: "integer", minimum: 0 },
+        reason: { type: "string", minLength: 3, maxLength: 500 },
+        correlationId: { type: "string", format: "uuid" },
+        payload: {
+          type: "object",
+          properties: {
+            workItemId: { type: "string", minLength: 1, maxLength: 160 },
+            situationCode: {
+              type: "string",
+              enum: ["BOM_DELAY", "PURCHASE_DELAY", "CAPACITY_RISK"],
+            },
+            requirementId: { type: "string", minLength: 1, maxLength: 160 },
+            materialType: {
+              type: "string",
+              enum: ["MANUAL_REFERENCE", "CONTROLLED_TEXT"],
+            },
+            displayName: { type: "string", minLength: 3, maxLength: 200 },
+            sourceMetadata: {
+              type: "object",
+              properties: {
+                sourceType: {
+                  type: "string",
+                  enum: [
+                    "INTERNAL_RECORD",
+                    "EXTERNAL_DOCUMENT",
+                    "HUMAN_PROVIDED",
+                  ],
+                },
+                sourceName: { type: "string", minLength: 3, maxLength: 200 },
+                sourceReference: {
+                  type: "string",
+                  minLength: 1,
+                  maxLength: 300,
+                  pattern:
+                    "^(?![A-Za-z][A-Za-z0-9+.-]*://)(?![A-Za-z]:[\\\\/])(?!\\\\\\\\)(?!/).+$",
+                },
+              },
+              required: ["sourceType", "sourceName"],
+              additionalProperties: false,
+            },
+            safeSummary: { type: "string", minLength: 3, maxLength: 1000 },
+            controlledTextContent: {
+              type: "string",
+              minLength: 3,
+              maxLength: 20000,
+            },
+          },
+          required: [
+            "workItemId",
+            "situationCode",
+            "requirementId",
+            "materialType",
+            "displayName",
+            "sourceMetadata",
+            "safeSummary",
+          ],
+          additionalProperties: false,
+        },
+      },
+      required: [
+        "projectId",
+        "requestId",
+        "expectedVersion",
+        "reason",
+        "correlationId",
+        "payload",
+      ],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "workpaper.propose",
+    description:
+      "由 PMC 在授权项目中追加一份可追溯的根因核验或分析 Proposal；不会确认根因、推进事项、批准方案或发布经验。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectId: { type: "string", minLength: 1, maxLength: 120 },
+        requestId: { type: "string", format: "uuid" },
+        expectedVersion: { type: "integer", minimum: 0 },
+        reason: { type: "string", minLength: 3, maxLength: 500 },
+        correlationId: { type: "string", format: "uuid" },
+        payload: {
+          type: "object",
+          properties: {
+            proposalType: {
+              type: "string",
+              enum: ["ROOT_CAUSE_VALIDATION", "ANALYSIS"],
+            },
+            summary: { type: "string", minLength: 3, maxLength: 500 },
+            reasoning: { type: "string", minLength: 3, maxLength: 4000 },
+            evidenceFindings: {
+              type: "array",
+              minItems: 1,
+              maxItems: 20,
+              items: {
+                type: "object",
+                properties: {
+                  evidenceId: { type: "string", minLength: 1, maxLength: 160 },
+                  assertion: { type: "string", minLength: 3, maxLength: 1000 },
+                },
+                required: ["evidenceId", "assertion"],
+                additionalProperties: false,
+              },
+            },
+            materialFindings: {
+              type: "array",
+              maxItems: 20,
+              items: {
+                type: "object",
+                properties: {
+                  materialId: { type: "string", minLength: 1, maxLength: 160 },
+                  assertion: { type: "string", minLength: 3, maxLength: 1000 },
+                  assessment: {
+                    type: "string",
+                    enum: ["SUPPORTS", "CONTRADICTS", "INCONCLUSIVE"],
+                  },
+                  note: { type: "string", maxLength: 500 },
+                },
+                required: ["materialId", "assertion", "assessment"],
+                additionalProperties: false,
+              },
+            },
+            experienceReferences: {
+              type: "array",
+              maxItems: 10,
+              items: {
+                type: "object",
+                properties: {
+                  experienceId: {
+                    type: "string",
+                    minLength: 1,
+                    maxLength: 160,
+                  },
+                  applicationNote: {
+                    type: "string",
+                    minLength: 3,
+                    maxLength: 500,
+                  },
+                },
+                required: ["experienceId", "applicationNote"],
+                additionalProperties: false,
+              },
+            },
+            assumptions: {
+              type: "array",
+              minItems: 1,
+              maxItems: 20,
+              items: { type: "string", minLength: 3, maxLength: 500 },
+            },
+            missingInformation: {
+              type: "array",
+              maxItems: 20,
+              items: { type: "string", minLength: 3, maxLength: 500 },
+            },
+            limitations: { type: "string", minLength: 3, maxLength: 1000 },
+          },
+          required: [
+            "proposalType",
+            "summary",
+            "reasoning",
+            "evidenceFindings",
+            "materialFindings",
+            "experienceReferences",
+            "assumptions",
+            "missingInformation",
+            "limitations",
+          ],
+          additionalProperties: false,
+        },
+      },
+      required: [
+        "projectId",
+        "requestId",
+        "expectedVersion",
+        "reason",
+        "correlationId",
+        "payload",
+      ],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "evidence.propose",
+    description:
+      "由 PMC 从授权项目内 VERIFIED Material 的不可覆盖 SourceVersion 与 exact span 登记 Evidence Proposal；仍非 FACT，必须经 PMC human gate 确认。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectId: { type: "string", minLength: 1, maxLength: 120 },
+        requestId: { type: "string", format: "uuid" },
+        expectedVersion: { type: "integer", minimum: 0 },
+        reason: { type: "string", minLength: 3, maxLength: 500 },
+        correlationId: { type: "string", format: "uuid" },
+        payload: {
+          type: "object",
+          properties: {
+            workItemId: { type: "string", minLength: 1, maxLength: 160 },
+            materialId: { type: "string", minLength: 1, maxLength: 160 },
+            claim: { type: "string", minLength: 3, maxLength: 1000 },
+            evidenceType: {
+              type: "string",
+              enum: ["OBSERVATION", "METRIC", "DOCUMENTED_FACT"],
+            },
+            sourceObjectId: { type: "string", minLength: 1, maxLength: 160 },
+            sourceVersionId: { type: "string", minLength: 1, maxLength: 160 },
+            exactSpan: {
+              type: "object",
+              properties: {
+                kind: { type: "string", enum: ["TEXT_SPAN"] },
+                start: { type: "integer", minimum: 0 },
+                end: { type: "integer", minimum: 1 },
+                exactText: { type: "string", minLength: 1, maxLength: 4000 },
+              },
+              required: ["kind", "start", "end", "exactText"],
+              additionalProperties: false,
+            },
+            reasoning: { type: "string", minLength: 3, maxLength: 4000 },
+            limitations: { type: "string", minLength: 3, maxLength: 1000 },
+          },
+          required: [
+            "workItemId",
+            "materialId",
+            "claim",
+            "evidenceType",
+            "sourceObjectId",
+            "sourceVersionId",
+            "exactSpan",
+            "reasoning",
+            "limitations",
+          ],
+          additionalProperties: false,
+        },
+      },
+      required: [
+        "projectId",
+        "requestId",
+        "expectedVersion",
+        "reason",
+        "correlationId",
+        "payload",
+      ],
+      additionalProperties: false,
+    },
+  },
+];
+
+const businessOnlySeeds: ToolSeed[] = [
+  {
+    name: "workspace.resume",
+    description:
+      "恢复授权的当前项目、阶段、事项、材料缺口和下一动作。事项、证据和材料分别在 workItems、evidence 和 materials 中返回。",
+    inputSchema: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "work.context",
+    description:
+      "读取授权项目的阶段摘要、事项、来源事实和材料缺口。事项细节见 workItems，材料在此仅返回元数据。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectId: { type: "string", minLength: 1, maxLength: 120 },
+      },
+      required: ["projectId"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "evidence.bundle",
+    description:
+      "读取授权项目的事实证据、材料核验、SourceVersion 定位、缺口与证据提案。底稿保留当前和最近确认版本。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectId: { type: "string", minLength: 1, maxLength: 120 },
+      },
+      required: ["projectId"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "experience.search",
+    description:
+      "从 PostgreSQL 实时检索 PUBLISHED 正式经验，保留 locator、limitations 与适用性边界。",
+    inputSchema: {
+      type: "object",
+      properties: { query: { type: "string", maxLength: 200, default: "" } },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "project.next_action",
+    description:
+      "从已授权项目的服务端状态、当前事项和材料缺口派生唯一且可解释的下一动作。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectId: { type: "string", minLength: 1, maxLength: 120 },
+      },
+      required: ["projectId"],
+      additionalProperties: false,
+    },
+  },
+];
+
+/**
+ * One definition per tool. Both surfaces below are ordered name lists over this
+ * registry rather than copies of the schemas, so a tool shared by the two
+ * surfaces cannot drift between them.
+ */
+const toolRegistry = new Map<string, ToolDescriptor>(
+  finalize([...compatibilitySeeds, ...businessOnlySeeds]).map((tool) => [
+    tool.name,
+    tool,
+  ]),
+);
+
+const toolFromRegistry = (name: string): ToolDescriptor => {
+  const tool = toolRegistry.get(name);
+  if (!tool) throw new Error(`Missing tool in registry: ${name}`);
+  return tool;
+};
+
+const businessToolNames: readonly string[] = [
+  ...operationTools.map((tool) => tool.name),
+  ...businessOnlySeeds.map((tool) => tool.name),
+  "workpaper.propose",
+  "material.create",
+  "evidence.propose",
+];
+
+const compatibilityToolNames: readonly string[] = compatibilitySeeds.map(
+  (tool) => tool.name,
+);
+
+/** Exported views share the very same ToolDescriptor instances. */
+export const dingjiangTools: ToolDescriptor[] =
+  businessToolNames.map(toolFromRegistry);
+export const dingjiangCompatibilityTools: ToolDescriptor[] =
+  compatibilityToolNames.map(toolFromRegistry);

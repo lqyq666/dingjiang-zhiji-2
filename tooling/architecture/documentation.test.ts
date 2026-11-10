@@ -268,11 +268,11 @@ describe("documented commands exist", () => {
         if (match[1]) tables.add(match[1].toLowerCase());
     }
 
-    const protocol = await readFile(
-      join(repositoryRoot, "services/dingjiang-mcp/src/protocol.ts"),
+    const catalog = await readFile(
+      join(repositoryRoot, "services/dingjiang-mcp/src/tools/catalog.ts"),
       "utf8",
     );
-    const tools = (protocol.match(/^ {4}name: "[a-z_.]+"/gm) ?? []).length;
+    const tools = (catalog.match(/^ {4}name: "[a-z_.]+"/gm) ?? []).length;
 
     const expectations: Array<{
       label: string;

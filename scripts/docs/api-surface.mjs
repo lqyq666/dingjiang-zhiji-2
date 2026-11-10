@@ -17,6 +17,7 @@ import { readdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { format, resolveConfig } from "prettier";
 import ts from "typescript";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -139,14 +140,17 @@ const render = (groups) => {
 const main = async () => {
   const prefix = await globalPrefix();
   const groups = await collect(prefix);
-  const { markdown, total } = render(groups);
-  const flat = groups.flatMap((group) => group.routes);
-
   if (process.argv.includes("--json")) {
+    const flat = groups.flatMap((group) => group.routes);
     console.log(JSON.stringify(flat, null, 2));
     return;
   }
 
+  const { markdown, total } = render(groups);
+  const formatted = await format(markdown, {
+    ...(await resolveConfig(documentPath)),
+    filepath: documentPath,
+  });
   if (process.argv.includes("--check")) {
     let current = "";
     try {
@@ -154,7 +158,7 @@ const main = async () => {
     } catch {
       current = "";
     }
-    if (current.trim() !== markdown.trim()) {
+    if (current.replaceAll("\r\n", "\n").trim() !== formatted.trim()) {
       console.error(
         "docs/api-surface.md 与控制器不一致，请运行 `node scripts/docs/api-surface.mjs` 重新生成。",
       );
@@ -165,7 +169,7 @@ const main = async () => {
     return;
   }
 
-  await writeFile(documentPath, markdown, "utf8");
+  await writeFile(documentPath, formatted, "utf8");
   console.log(`已写入 ${relative(root, documentPath)}：${total} 个路由`);
 };
 

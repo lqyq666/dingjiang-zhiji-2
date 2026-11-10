@@ -45,12 +45,9 @@ const tenantId = runtimeTenantId();
 export class Vs01Service implements OnModuleInit, OnModuleDestroy {
   private readonly pool: Pool;
   private readonly commandTransaction?: PoolClient;
-  private get database() {
-    return this.commandTransaction ?? this.pool;
-  }
   private workpapers: RootCauseWorkpaperService | undefined;
   private readonly materials: MaterialService;
-  private readonly readModel: ReadModelService;
+  readonly readModel: ReadModelService;
   private readonly lifecycle: ProjectLifecycleService;
   private readonly experienceService: ExperienceService;
   private readonly assistant: AssistantService;
@@ -121,7 +118,7 @@ export class Vs01Service implements OnModuleInit, OnModuleDestroy {
       return;
     }
     await migrate(this.pool);
-    const result = await this.database.query(
+    const result = await (this.commandTransaction ?? this.pool).query(
       "SELECT count(*)::int AS count FROM vs01_orders WHERE tenant_id = $1",
       [tenantId],
     );
@@ -210,9 +207,12 @@ export class Vs01Service implements OnModuleInit, OnModuleDestroy {
     return this.readModel.project(id);
   }
 
-  /** Stable read seam for authorized Integration API projections. */
-  async projectList(): Promise<Project[]> {
-    return this.readModel.projectList();
+  readSnapshot<T>(read: (snapshot: ReadModelService) => Promise<T>) {
+    return this.readModel.readSnapshot(read);
+  }
+
+  async projectList(projectIds?: readonly string[]): Promise<Project[]> {
+    return this.readModel.projectList(projectIds);
   }
 
   /** Safe, contract-shaped projection used by the read-only project assistant. */

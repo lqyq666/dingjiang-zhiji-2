@@ -31,6 +31,27 @@ const { fixtures, cases } = JSON.parse(
   readFileSync(join(here, "cases.json"), "utf8"),
 );
 
+fixtures.getWorkContext = {
+  projectId: fixtures.getCurrentProject.id,
+  context: fixtures.getProjectContext,
+  state: fixtures.getProjectState,
+  currentWorkItem: fixtures.getCurrentWorkItem,
+  workItems: fixtures.listProjectWorkItems,
+};
+fixtures.getEvidenceBundle = {
+  projectId: fixtures.getCurrentProject.id,
+  evidence: fixtures.listEvidence,
+  materials: fixtures.listTraceableMaterials,
+  workpaper: fixtures.getValidationWorkpaper,
+  proposals: [],
+};
+fixtures.getWorkspaceResume = {
+  ...fixtures.getWorkContext,
+  ...fixtures.getEvidenceBundle,
+  projects: fixtures.listProjects,
+  nextAction: fixtures.getNextAction,
+};
+
 const clone = (value) =>
   value === undefined ? undefined : structuredClone(value);
 
@@ -53,6 +74,16 @@ const createClient = (overrides = {}) => {
 };
 
 const identity = { startup: "eval", current: () => "eval" };
+
+const wireForRevision = (handler, revision) => {
+  if (revision !== protocol.modernProtocolVersion) return handler;
+  const _meta = {
+    "io.modelcontextprotocol/protocolVersion": revision,
+    "io.modelcontextprotocol/clientCapabilities": {},
+  };
+  return (request) =>
+    handler({ ...request, params: { ...request.params, _meta } });
+};
 
 const withEnv = async (env, run) => {
   if (!env) return run();
@@ -116,7 +147,7 @@ const invokeTool = async (handler, name, args) => {
 const ok = (detail) => ({ pass: true, detail });
 const fail = (detail) => ({ pass: false, detail });
 
-const runCase = async (testCase, session) =>
+const runCase = async (testCase, revision) =>
   withEnv(testCase.env, async () => {
     if (testCase.kind === "protocol") return runProtocolCase(testCase);
 
@@ -130,31 +161,32 @@ const runCase = async (testCase, session) =>
       };
     }
     if (testCase.kind === "absent") {
-      const { method, code } = testCase.absent;
+      const { method, code, response } = testCase.absent;
       overrides[method] = () => {
+        if (response) return { ...fixtures[method], ...response };
         throw new IntegrationClientError({
           ok: false,
           error: {
             code,
-            message:
-              code === "NOT_FOUND"
-                ? "授权范围内未找到该资源"
-                : "当前身份无权访问该资源",
+            message: "当前身份无权访问该资源",
             retryable: false,
-            requiresHuman: code !== "NOT_FOUND",
+            requiresHuman: true,
           },
           correlationId: "6f1c2f7e-1111-4222-8333-444455556666",
         });
       };
     }
     const { client, calls } = createClient(overrides);
-    const handler = protocol.createMcpHandler(client, identity);
-    if (session)
+    const handler = wireForRevision(
+      protocol.createMcpHandler(client, identity),
+      revision,
+    );
+    if (revision === protocol.legacyProtocolVersion)
       await handler({
         jsonrpc: "2.0",
         id: "eval-matrix-initialize",
         method: "initialize",
-        params: session,
+        params: { protocolVersion: revision },
       });
     const result = await invokeTool(handler, testCase.tool, testCase.arguments);
 
@@ -163,11 +195,16 @@ const runCase = async (testCase, session) =>
         return fail(`返回错误：${result.payload?.code ?? result.text}`);
       if (result.structured === undefined)
         return fail("缺少 structuredContent");
-      const called = new Set(calls.map((call) => call.method));
-      const missing = (testCase.expect?.calledMethods ?? []).filter(
-        (method) => !called.has(method),
-      );
-      if (missing.length > 0) return fail(`未调用：${missing.join(", ")}`);
+      const expectedMethods = testCase.expect?.calledMethods;
+      const called = calls.map((call) => call.method);
+      if (
+        expectedMethods &&
+        (called.length !== expectedMethods.length ||
+          called.some((method, index) => method !== expectedMethods[index]))
+      )
+        return fail(
+          `Integration 调用为 ${called.join(", ")}，应为 ${expectedMethods.join(", ")}`,
+        );
       return ok(`structuredContent + ${calls.length} 次 Integration 调用`);
     }
 
@@ -315,7 +352,7 @@ const runMetadataCheck = async () => {
       jsonrpc: "2.0",
       id: "meta-initialize",
       method: "initialize",
-      params: { protocolVersion: protocol.latestProtocolVersion },
+      params: { protocolVersion: protocol.legacyProtocolVersion },
     })
     .then((response) => response?.result);
 
@@ -361,19 +398,16 @@ const runMetadataCheck = async () => {
   };
 };
 
-/**
- * A session may advertise fewer fields (an old revision has no outputSchema),
- * but it must never advertise weaker governance or let a hostile argument
- * through. The same contract cases therefore run under every combination of
- * negotiated revision and deployment surface.
- */
+/** Replay business contracts on both wire revisions and both tool surfaces. */
 const runSessionMatrixCheck = async () => {
-  const latest = protocol.latestProtocolVersion;
   const scenarios = [
     { id: "default", env: undefined, surface: "business" },
     { id: "compat-env", env: "compatibility", surface: "compatibility" },
   ];
-  const revisions = [protocol.latestProtocolVersion];
+  const revisions = [
+    protocol.legacyProtocolVersion,
+    protocol.modernProtocolVersion,
+  ];
   // Protocol cases drive their own handshake; replaying them under a forced
   // session would only re-test the harness. Everything else reaches the
   // dispatcher and must hold in every session.
@@ -385,17 +419,33 @@ const runSessionMatrixCheck = async () => {
   let caseRuns = 0;
   for (const scenario of scenarios) {
     for (const revision of revisions) {
-      const session = { protocolVersion: revision };
+      const modern = revision === protocol.modernProtocolVersion;
       const failures = [];
       await withEnv({ DINGJIANG_MCP_TOOL_SURFACE: scenario.env }, async () => {
         const { client } = createClient();
-        const handler = protocol.createMcpHandler(client, identity);
-        await handler({
+        const handler = wireForRevision(
+          protocol.createMcpHandler(client, identity),
+          revision,
+        );
+        const started = await handler({
           jsonrpc: "2.0",
-          id: "matrix-initialize",
-          method: "initialize",
-          params: session,
+          id: "matrix-open",
+          method: modern ? "server/discover" : "initialize",
+          params: modern ? undefined : { protocolVersion: revision },
         });
+        const startup = started?.result;
+        const reportsRevision = modern
+          ? startup?.resultType === "complete" &&
+            startup.supportedVersions?.includes(revision)
+          : startup?.protocolVersion === revision;
+        if (!reportsRevision || !startup?.capabilities?.tools)
+          failures.push("握手或发现未声明预期的版本与工具能力");
+        if (
+          !["PROPOSAL", "requestId", "OWNER"].every((token) =>
+            startup?.instructions?.includes(token),
+          )
+        )
+          failures.push("治理指令不完整");
         const listed = await handler({
           jsonrpc: "2.0",
           id: "matrix-list",
@@ -409,8 +459,10 @@ const runSessionMatrixCheck = async () => {
         const withOutputSchema = tools.filter(
           (tool) => tool.outputSchema,
         ).length;
-        if (withOutputSchema === 0)
-          failures.push("工具面一个 outputSchema 都没有下发");
+        if (withOutputSchema !== expected)
+          failures.push(
+            `下发 ${withOutputSchema} 个 outputSchema，应为 ${expected}`,
+          );
 
         for (const tool of tools) {
           if (typeof tool.annotations?.readOnlyHint !== "boolean")
@@ -426,7 +478,7 @@ const runSessionMatrixCheck = async () => {
 
         for (const testCase of contractCases) {
           caseRuns += 1;
-          const outcome = await runCase(testCase, session);
+          const outcome = await runCase(testCase, revision);
           if (!outcome.pass) failures.push(`${testCase.id}: ${outcome.detail}`);
         }
       });
@@ -435,7 +487,7 @@ const runSessionMatrixCheck = async () => {
         pass: failures.length === 0,
         detail:
           failures.length === 0
-            ? `${scenario.surface} 面 · ${contractCases.length} 用例回归 · 降级只影响元数据`
+            ? `${scenario.surface} 面 · ${contractCases.length} 用例回归 · 治理校验一致`
             : failures.slice(0, 3).join("；"),
       });
     }
@@ -622,7 +674,7 @@ function renderReport(summary, results) {
     "",
     "## 会话档案矩阵",
     "",
-    `工具面共 ${summary.matrix.total} 组，累计回归 ${summary.matrix.caseRuns} 次用例。两套工具面必须给出同一套治理标注、幂等校验与参数拦截。`,
+    `协议版本与工具面共 ${summary.matrix.total} 组，累计回归 ${summary.matrix.caseRuns} 次用例。各组合使用同一套治理标注、幂等校验与参数拦截。`,
     "",
     "| 组合 | 结果 | 证据 |",
     "| --- | --- | --- |",
@@ -632,7 +684,7 @@ function renderReport(summary, results) {
     "",
     "- 未连接真实 Dingjiang API：所有 Integration 行为为 mock，未验证网络、鉴权、事务与 RLS。",
     "- 未验证 LLM 自然语言到工具选择的准确率：需要外部模型凭据，且结果不可在 CI 中稳定复现。",
-    "- 未对 fixture 做 `outputSchema` 校验：mock client 绕过了 client.ts 中的 Zod 响应校验，因此元数据不变量只断言声明完备与读/写标注一致，不声称 fixture 与 schema 同构。",
+    "- 三个聚合结果按发布的 Zod 契约裁剪并校验。单项工具的 mock 直接提供数据，HTTP 响应校验由 client 测试和真实链路覆盖。",
     "- 未覆盖 `material.create` / `material.verify` / `evidence.propose` / `evidence.confirm` 的完整写 payload；这些工具由可达性检查与参数守卫覆盖。",
   ].join("\n");
 }

@@ -2,6 +2,13 @@ import { randomUUID } from "node:crypto";
 
 import type { INestApplication } from "@nestjs/common";
 import { NestFactory } from "@nestjs/core";
+import {
+  evidenceProposalReviewListSchema,
+  integrationEvidenceBundleSchema,
+  integrationMaterialPreviewSchema,
+  integrationSuccessEnvelopeSchema,
+  integrationWorkspaceResumeSchema,
+} from "@dingjiang/contracts";
 import type { Pool } from "pg";
 import { createTestPool } from "./testing/test-pool";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -134,6 +141,8 @@ integrationDescribe(
           role: "PMC",
           scopes: [
             "project:read",
+            "workitem:read",
+            "workpaper:read",
             "material:read",
             "evidence:read",
             "evidence:write",
@@ -251,6 +260,60 @@ integrationDescribe(
           review: null,
         }),
       ]);
+
+      const readHeaders = { authorization: `Bearer ${token}` };
+      const integrationProposals = await fetch(
+        `${api}/integration/projects/${projectId}/evidence/proposals`,
+        { headers: readHeaders },
+      );
+      expect(integrationProposals.status).toBe(200);
+      const { data: proposals } = integrationSuccessEnvelopeSchema(
+        evidenceProposalReviewListSchema,
+      ).parse(await integrationProposals.json());
+      expect(proposals).toEqual([
+        expect.objectContaining({ proposalId, projectId, review: null }),
+      ]);
+      const resume = await fetch(`${api}/integration/workspace/resume`, {
+        headers: readHeaders,
+      });
+      expect(resume.status).toBe(200);
+      const { data: workspace } = integrationSuccessEnvelopeSchema(
+        integrationWorkspaceResumeSchema,
+      ).parse(await resume.json());
+      expect(workspace.proposals).toEqual(proposals);
+      expect(
+        workspace.materials.items.find((item) => item.id === materialId),
+      ).toMatchObject({ evidenceProposalVersion: 1 });
+
+      const bundle = await fetch(
+        `${api}/integration/projects/${projectId}/evidence-bundle`,
+        { headers: readHeaders },
+      );
+      expect(bundle.status).toBe(200);
+      const { data: evidenceBundle } = integrationSuccessEnvelopeSchema(
+        integrationEvidenceBundleSchema,
+      ).parse(await bundle.json());
+      expect(evidenceBundle.proposals).toEqual(proposals);
+      expect(evidenceBundle.materials).toEqual(workspace.materials);
+
+      const preview = await fetch(
+        `${api}/integration/projects/${projectId}/materials/${materialId}/preview`,
+        { headers: readHeaders },
+      );
+      expect(preview.status).toBe(200);
+      expect(
+        integrationSuccessEnvelopeSchema(
+          integrationMaterialPreviewSchema,
+        ).parse(await preview.json()).data,
+      ).toMatchObject({
+        bodyAvailable: false,
+        material: {
+          id: materialId,
+          file: null,
+          evidenceProposalVersion: 1,
+          locator: { sourceVersionId },
+        },
+      });
 
       const before = await fetch(
         `${api}/integration/projects/${projectId}/evidence`,

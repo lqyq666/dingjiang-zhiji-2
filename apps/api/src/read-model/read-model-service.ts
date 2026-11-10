@@ -43,6 +43,13 @@ import {
 } from "./projections";
 
 const legacyProjectId = "PRJ-OTD-001";
+const projectHeaderJoin =
+  "FROM vs01_projects p JOIN vs01_project_nodes n ON n.project_id = p.id JOIN vs01_result_validations rv ON rv.project_id = p.id";
+const taskMaterialsSchema = taskDetailSchema.pick({
+  id: true,
+  materials: true,
+  situations: true,
+});
 
 type OrderRow = QueryResultRow & {
   order_id: string;
@@ -81,6 +88,31 @@ export class ReadModelService {
 
   private get database() {
     return this.commandTransaction ?? this.pool;
+  }
+
+  /** Bind all reads to one PostgreSQL snapshot and one connection. */
+  async readSnapshot<T>(
+    read: (snapshot: ReadModelService) => Promise<T>,
+  ): Promise<T> {
+    const client = await this.pool.connect();
+    let discard = false;
+    try {
+      await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
+      const result = await read(
+        new ReadModelService(this.pool, this.tenantId, client),
+      );
+      await client.query("COMMIT");
+      return result;
+    } catch (error) {
+      try {
+        await client.query("ROLLBACK");
+      } catch {
+        discard = true;
+      }
+      throw error;
+    } finally {
+      client.release(discard);
+    }
   }
 
   async employee(): Promise<EmployeeDashboard> {
@@ -140,10 +172,7 @@ export class ReadModelService {
       "SELECT type, note, decided_by, decided_at FROM vs01_decisions WHERE task_id = $1 AND tenant_id = $2",
       [id, this.tenantId],
     );
-    const materialResult = await this.database.query(
-      "SELECT m.id, m.situation_code, m.requirement_id, m.title, m.source_reference, m.note, m.kind, m.status, m.source_object_id, m.source_version_id, m.withdrawn_at, m.withdrawn_reason, m.created_by, m.created_at, c.original_name, c.media_type, c.byte_size, c.sha256, c.extraction_status, c.content_preview, c.readable_by_ai, (g.material_id IS NOT NULL) AS verification_eligible, v.verification_status, v.verification_version, v.verified_by, v.verification_note, v.verified_at FROM vs01_task_materials m LEFT JOIN vs15_material_contents c ON c.source_version_id = m.source_version_id AND c.tenant_id = m.tenant_id LEFT JOIN vs15_governed_material_versions g ON g.material_id = m.id AND g.tenant_id = m.tenant_id LEFT JOIN LATERAL (SELECT e.event_type AS verification_status, e.verification_version, e.actor_subject_id AS verified_by, e.reason AS verification_note, e.created_at AS verified_at FROM vs15_material_events e WHERE e.tenant_id = m.tenant_id AND e.material_id = m.id AND e.verification_version IS NOT NULL ORDER BY e.verification_version DESC LIMIT 1) v ON true WHERE m.task_id = $1 AND m.tenant_id = $2 ORDER BY m.created_at, m.id",
-      [id, this.tenantId],
-    );
+    const materials = await this.readTaskMaterials(id);
     const referenceResult = await this.database.query(
       "SELECT r.id, r.experience_id, r.status, r.classification, r.note, r.created_at, r.withdrawn_at, r.withdrawn_reason, r.experience_source_object_id, r.experience_source_version_id, f.title, f.applicable_situation, f.limitations FROM vs01_experience_references r JOIN vs01_formal_experiences f ON f.id = r.experience_id WHERE r.task_id = $1 AND r.tenant_id = $2 ORDER BY r.created_at, r.id",
       [id, this.tenantId],
@@ -152,15 +181,121 @@ export class ReadModelService {
       "SELECT e.id, e.reference_id, e.task_id, r.experience_id, f.title AS experience_title, e.event_type, e.actor, e.note, e.snapshot, e.created_at FROM vs01_experience_reference_events e JOIN vs01_experience_references r ON r.id = e.reference_id AND r.tenant_id = e.tenant_id JOIN vs01_formal_experiences f ON f.id = r.experience_id AND f.tenant_id = e.tenant_id WHERE e.task_id = $1 AND e.tenant_id = $2 ORDER BY e.id",
       [id, this.tenantId],
     );
+    const evidence = await this.readTaskEvidence(id, row);
+    const evidenceSuffix = sourceTaskSuffix(id);
+    const saved = decision.rows[0];
+    return taskDetailSchema.parse({
+      id,
+      status: saved ? "DECIDED" : "OPEN",
+      order: this.orderRisk(row),
+      facts: [
+        {
+          label: "预计延期",
+          value: `${delay(row.forecast_date, row.promised_date)} 天`,
+          evidenceId: `E-ORDER-${evidenceSuffix}`,
+        },
+        {
+          label: "BOM完成",
+          value: `晚 ${Number(row.bom_delay)} 天`,
+          evidenceId: `E-BOM-${evidenceSuffix}`,
+        },
+        {
+          label: "采购启动",
+          value: `晚 ${Number(row.purchase_delay)} 天`,
+          evidenceId: `E-PURCHASE-${evidenceSuffix}`,
+        },
+      ],
+      analysis: {
+        provider: "DEMO_RULES",
+        classification: "PROPOSAL",
+        candidateCause: isProduction()
+          ? "需结合当前版本的订单、BOM、采购和现场材料核验原因；日期相关性不等于根因。"
+          : "BOM准备滞后可能是当前主要原因",
+        evidenceIds: [
+          `E-BOM-${evidenceSuffix}`,
+          `E-PURCHASE-${evidenceSuffix}`,
+          `E-ORDER-${evidenceSuffix}`,
+        ],
+      },
+      evidence,
+      situations: situations(row, materials, id),
+      materials,
+      experienceReferences: referenceResult.rows.map((reference) => ({
+        id: reference.id,
+        taskId: id,
+        experienceId: reference.experience_id,
+        status: reference.status,
+        classification: "PROPOSAL",
+        title: reference.title,
+        applicableSituation: reference.applicable_situation,
+        limitations: reference.limitations,
+        note: reference.note,
+        createdBy: "PMC",
+        createdAt: new Date(reference.created_at).toISOString(),
+        withdrawnAt: reference.withdrawn_at
+          ? new Date(reference.withdrawn_at).toISOString()
+          : null,
+        withdrawnReason: reference.withdrawn_reason ?? null,
+        experienceLocator: {
+          sourceObjectId: reference.experience_source_object_id,
+          sourceVersionId: reference.experience_source_version_id,
+          reference: reference.title,
+        },
+      })),
+      experienceReferenceAuditTrail: referenceEventResult.rows.map((event) => ({
+        id: String(event.id),
+        referenceId: event.reference_id,
+        taskId: event.task_id,
+        experienceId: event.experience_id,
+        experienceTitle: event.experience_title,
+        eventType: event.event_type,
+        actor: event.actor,
+        note: event.note,
+        snapshot: event.snapshot,
+        createdAt: new Date(event.created_at).toISOString(),
+      })),
+      decision: saved
+        ? {
+            type: saved.type,
+            note: saved.note,
+            decidedBy: "PMC",
+            decidedAt: new Date(saved.decided_at).toISOString(),
+          }
+        : null,
+    });
+  }
+
+  async taskMaterials(id: string) {
+    const row = await this.orderForTask(id);
+    const materials = await this.readTaskMaterials(id);
+    return taskMaterialsSchema.parse({
+      id,
+      materials,
+      situations: situations(row, materials, id),
+    });
+  }
+
+  private async readTaskMaterials(id: string) {
+    const materialResult = await this.database.query(
+      "SELECT m.id, m.situation_code, m.requirement_id, m.title, m.source_reference, m.note, m.kind, m.status, m.source_object_id, m.source_version_id, m.withdrawn_at, m.withdrawn_reason, m.created_by, m.created_at, c.original_name, c.media_type, c.byte_size, c.sha256, c.extraction_status, c.content_preview, c.readable_by_ai, (g.material_id IS NOT NULL) AS verification_eligible, v.verification_status, v.verification_version, v.verified_by, v.verification_note, v.verified_at FROM vs01_task_materials m LEFT JOIN vs15_material_contents c ON c.source_version_id = m.source_version_id AND c.tenant_id = m.tenant_id LEFT JOIN vs15_governed_material_versions g ON g.material_id = m.id AND g.tenant_id = m.tenant_id LEFT JOIN LATERAL (SELECT e.event_type AS verification_status, e.verification_version, e.actor_subject_id AS verified_by, e.reason AS verification_note, e.created_at AS verified_at FROM vs15_material_events e WHERE e.tenant_id = m.tenant_id AND e.material_id = m.id AND e.verification_version IS NOT NULL ORDER BY e.verification_version DESC LIMIT 1) v ON true WHERE m.task_id = $1 AND m.tenant_id = $2 ORDER BY m.created_at, m.id",
+      [id, this.tenantId],
+    );
+    return materialResult.rows.map(materialProjection);
+  }
+
+  async taskEvidence(id: string): Promise<TaskDetail["evidence"]> {
+    return taskDetailSchema.shape.evidence.parse(
+      await this.readTaskEvidence(id, await this.orderForTask(id)),
+    );
+  }
+
+  private async readTaskEvidence(id: string, row: QueryResultRow) {
     const formalEvidenceResult = await this.database.query(
       "SELECT f.*, m.title AS material_title FROM vs32_formal_evidence f JOIN vs32_evidence_proposals p ON p.id = f.proposal_id AND p.tenant_id = f.tenant_id JOIN vs01_task_materials m ON m.id = p.material_id AND m.tenant_id = f.tenant_id WHERE f.source_task_id = $1 AND f.tenant_id = $2 ORDER BY f.confirmed_at, f.id",
       [id, this.tenantId],
     );
-    const materials = materialResult.rows.map((material) =>
-      materialProjection(material),
-    );
     const evidenceSuffix = sourceTaskSuffix(id);
-    const evidence = [
+    return [
       buildEvidence(
         `E-ORDER-${evidenceSuffix}`,
         isProduction()
@@ -247,86 +382,6 @@ export class ReadModelService {
         confirmedAt: new Date(formal.confirmed_at).toISOString(),
       })),
     ];
-    const saved = decision.rows[0];
-    return taskDetailSchema.parse({
-      id,
-      status: saved ? "DECIDED" : "OPEN",
-      order: this.orderRisk(row),
-      facts: [
-        {
-          label: "预计延期",
-          value: `${delay(row.forecast_date, row.promised_date)} 天`,
-          evidenceId: `E-ORDER-${evidenceSuffix}`,
-        },
-        {
-          label: "BOM完成",
-          value: `晚 ${Number(row.bom_delay)} 天`,
-          evidenceId: `E-BOM-${evidenceSuffix}`,
-        },
-        {
-          label: "采购启动",
-          value: `晚 ${Number(row.purchase_delay)} 天`,
-          evidenceId: `E-PURCHASE-${evidenceSuffix}`,
-        },
-      ],
-      analysis: {
-        provider: "DEMO_RULES",
-        classification: "PROPOSAL",
-        candidateCause: isProduction()
-          ? "需结合当前版本的订单、BOM、采购和现场材料核验原因；日期相关性不等于根因。"
-          : "BOM准备滞后可能是当前主要原因",
-        evidenceIds: [
-          `E-BOM-${evidenceSuffix}`,
-          `E-PURCHASE-${evidenceSuffix}`,
-          `E-ORDER-${evidenceSuffix}`,
-        ],
-      },
-      evidence,
-      situations: situations(row, materials, id),
-      materials,
-      experienceReferences: referenceResult.rows.map((reference) => ({
-        id: reference.id,
-        taskId: id,
-        experienceId: reference.experience_id,
-        status: reference.status,
-        classification: "PROPOSAL",
-        title: reference.title,
-        applicableSituation: reference.applicable_situation,
-        limitations: reference.limitations,
-        note: reference.note,
-        createdBy: "PMC",
-        createdAt: new Date(reference.created_at).toISOString(),
-        withdrawnAt: reference.withdrawn_at
-          ? new Date(reference.withdrawn_at).toISOString()
-          : null,
-        withdrawnReason: reference.withdrawn_reason ?? null,
-        experienceLocator: {
-          sourceObjectId: reference.experience_source_object_id,
-          sourceVersionId: reference.experience_source_version_id,
-          reference: reference.title,
-        },
-      })),
-      experienceReferenceAuditTrail: referenceEventResult.rows.map((event) => ({
-        id: String(event.id),
-        referenceId: event.reference_id,
-        taskId: event.task_id,
-        experienceId: event.experience_id,
-        experienceTitle: event.experience_title,
-        eventType: event.event_type,
-        actor: event.actor,
-        note: event.note,
-        snapshot: event.snapshot,
-        createdAt: new Date(event.created_at).toISOString(),
-      })),
-      decision: saved
-        ? {
-            type: saved.type,
-            note: saved.note,
-            decidedBy: "PMC",
-            decidedAt: new Date(saved.decided_at).toISOString(),
-          }
-        : null,
-    });
   }
 
   async evidenceProposals(
@@ -374,19 +429,45 @@ export class ReadModelService {
     );
   }
 
+  async evidenceProposalVersions(projectId: string, sourceVersionId?: string) {
+    const params = [projectId, this.tenantId];
+    const versionFilter = sourceVersionId
+      ? " AND p.source_version_id = $3"
+      : "";
+    if (sourceVersionId) params.push(sourceVersionId);
+    const { rows } = await this.database.query<{
+      source_version_id: string;
+      version: number;
+    }>(
+      `SELECT p.source_version_id, count(*)::int AS version FROM vs32_evidence_proposals p JOIN vs01_task_materials m ON m.id = p.material_id AND m.tenant_id = p.tenant_id WHERE p.project_id = $1 AND p.tenant_id = $2${versionFilter} GROUP BY p.source_version_id`,
+      params,
+    );
+    return new Map(rows.map((row) => [row.source_version_id, row.version]));
+  }
+
+  async projectSourceTaskId(id: string): Promise<string> {
+    const { rows } = await this.database.query<{ source_task_id: string }>(
+      `SELECT p.source_task_id ${projectHeaderJoin} WHERE p.id = $1 AND p.tenant_id = $2`,
+      [id, this.tenantId],
+    );
+    const sourceTaskId = rows[0]?.source_task_id;
+    if (!sourceTaskId) throw new NotFoundException("项目不存在");
+    return sourceTaskId;
+  }
+
   async project(id: string): Promise<Project> {
     const project = await this.findProject(id);
     if (!project) throw new NotFoundException("项目不存在");
     return project;
   }
 
-  async projectList(): Promise<Project[]> {
-    return this.projects();
+  async projectList(projectIds?: readonly string[]): Promise<Project[]> {
+    return this.projects(true, projectIds);
   }
 
   async rootCauseWorkpaper(id: string) {
-    this.workpapers ??= new RootCauseWorkpaperService();
-    return this.workpapers.view(id);
+    this.workpapers ??= new RootCauseWorkpaperService(this.pool);
+    return this.workpapers.view(id, this.commandTransaction);
   }
 
   async assistantFeedback(
@@ -544,12 +625,29 @@ export class ReadModelService {
     );
   }
 
-  private async projects(includeAcceptance = true): Promise<Project[]> {
+  private async projects(
+    includeAcceptance = true,
+    projectIds?: readonly string[],
+  ): Promise<Project[]> {
+    const values: unknown[] = [this.tenantId, includeAcceptance];
+    let projectFilter = "";
+    if (projectIds) {
+      values.push(projectIds);
+      projectFilter = " AND p.id = ANY($3::text[])";
+    }
     const result = await this.database.query(
-      "SELECT p.id FROM vs01_projects p JOIN vs01_orders o ON o.order_id = p.source_task_id AND o.tenant_id = p.tenant_id WHERE p.tenant_id = $1 AND ($2::boolean OR o.status <> 'E2E_ACCEPTANCE') ORDER BY p.id",
-      [this.tenantId, includeAcceptance],
+      `SELECT p.id FROM vs01_projects p JOIN vs01_orders o ON o.order_id = p.source_task_id AND o.tenant_id = p.tenant_id WHERE p.tenant_id = $1 AND ($2::boolean OR o.status <> 'E2E_ACCEPTANCE')${projectFilter} ORDER BY p.id`,
+      values,
     );
-    return Promise.all(result.rows.map((row) => this.project(String(row.id))));
+    if (!this.commandTransaction)
+      return Promise.all(
+        result.rows.map((row) => this.project(String(row.id))),
+      );
+
+    const projects: Project[] = [];
+    for (const row of result.rows)
+      projects.push(await this.project(String(row.id)));
+    return projects;
   }
 
   private async highRiskOrders(includeAcceptance = true) {
@@ -628,9 +726,17 @@ export class ReadModelService {
     }));
   }
 
+  async assertTaskFactsAvailable(id: string): Promise<void> {
+    await this.orderForTask(id);
+  }
+
   private async orderForTask(id: string): Promise<QueryResultRow> {
-    if (isProduction())
-      return productionTaskFacts(this.database, id, this.tenantId);
+    if (isProduction()) {
+      const row = await productionTaskFacts(this.database, id, this.tenantId);
+      for (const kind of ["order", "bom", "purchase"] as const)
+        sourceLocator(row, kind);
+      return row;
+    }
     const result = await this.database.query(
       "SELECT t.id, o.order_id, o.customer, o.promised_date, o.forecast_date, o.status AS order_status, o.source_row AS order_source_row, b.planned_bom_date, b.actual_bom_date, b.completion_status, b.source_row AS bom_source_row, GREATEST((b.actual_bom_date - b.planned_bom_date), 0)::int AS bom_delay, p.planned_start_date, p.actual_start_date, p.arrival_risk, p.source_row AS purchase_source_row, GREATEST((p.actual_start_date - p.planned_start_date), 0)::int AS purchase_delay FROM vs01_tasks t JOIN vs01_orders o ON o.order_id = t.order_id JOIN vs01_bom b ON b.order_id = o.order_id JOIN vs01_purchases p ON p.order_id = o.order_id WHERE t.id = $1 AND t.tenant_id = $2",
       [id, this.tenantId],
@@ -641,7 +747,7 @@ export class ReadModelService {
 
   private async findProject(id = legacyProjectId): Promise<Project | null> {
     const result = await this.database.query(
-      "SELECT p.id, p.source_task_id, p.name, p.status, p.returned_reason, p.metric_before, p.metric_target, n.id AS node_id, n.name AS node_name, n.latest_update, rv.baseline, rv.target, rv.current AS outcome_current, rv.status AS outcome_status, rv.conclusion, rv.evidence_reference, rv.note AS outcome_note, rv.submitted_at, rv.accepted_at, rv.source_object_id, rv.source_version_id FROM vs01_projects p JOIN vs01_project_nodes n ON n.project_id = p.id JOIN vs01_result_validations rv ON rv.project_id = p.id WHERE p.id = $1 AND p.tenant_id = $2",
+      `SELECT p.id, p.source_task_id, p.name, p.status, p.returned_reason, p.metric_before, p.metric_target, n.id AS node_id, n.name AS node_name, n.latest_update, rv.baseline, rv.target, rv.current AS outcome_current, rv.status AS outcome_status, rv.conclusion, rv.evidence_reference, rv.note AS outcome_note, rv.submitted_at, rv.accepted_at, rv.source_object_id, rv.source_version_id ${projectHeaderJoin} WHERE p.id = $1 AND p.tenant_id = $2`,
       [id, this.tenantId],
     );
     const row = result.rows[0];
@@ -663,7 +769,7 @@ export class ReadModelService {
       [id, this.tenantId],
     );
     const materialResult = await this.database.query(
-      "SELECT m.id, m.situation_code, m.requirement_id, m.title, m.source_reference, m.note, m.kind, m.status, m.source_object_id, m.source_version_id, m.withdrawn_at, m.withdrawn_reason, m.created_by, m.created_at, c.original_name, c.media_type, c.byte_size, c.sha256, c.extraction_status, c.content_preview, c.readable_by_ai, (g.material_id IS NOT NULL) AS verification_eligible, v.verification_status, v.verification_version, v.verified_by, v.verification_note, v.verified_at FROM vs01_task_materials m LEFT JOIN vs15_material_contents c ON c.source_version_id = m.source_version_id AND c.tenant_id = m.tenant_id LEFT JOIN vs15_governed_material_versions g ON g.material_id = m.id AND g.tenant_id = m.tenant_id LEFT JOIN LATERAL (SELECT e.event_type AS verification_status, e.verification_version, e.actor_subject_id AS verified_by, e.reason AS verification_note, e.created_at AS verified_at FROM vs15_material_events e WHERE e.tenant_id = m.tenant_id AND e.material_id = m.id AND e.verification_version IS NOT NULL ORDER BY e.verification_version DESC LIMIT 1) v ON true WHERE m.task_id = $1 AND m.tenant_id = $2 AND m.status = 'ACTIVE' ORDER BY m.created_at DESC, m.id DESC",
+      "SELECT situation_code, requirement_id, title, source_reference FROM vs01_task_materials WHERE task_id = $1 AND tenant_id = $2 AND status = 'ACTIVE' ORDER BY created_at DESC, id DESC",
       [row.source_task_id, this.tenantId],
     );
     const projectReferenceResult = await this.database.query(

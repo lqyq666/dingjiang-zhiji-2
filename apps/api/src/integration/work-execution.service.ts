@@ -28,6 +28,7 @@ import { createPool } from "../vs01-db";
 import { isProduction } from "../runtime-config";
 import { sourceTaskFromReservation } from "../projects/production-lifecycle";
 import { FeishuWorkNotifier } from "./feishu-work.notifier";
+import { hasProjectAccess } from "./integration-access";
 
 const fingerprint = (project: Project | TaskDetail) =>
   createHash("sha256").update(JSON.stringify(project)).digest("hex");
@@ -109,10 +110,8 @@ export class WorkExecutionService implements OnModuleDestroy {
   }
 
   async events(principal: IntegrationPrincipal) {
-    const projects = (await this.domain.projectList()).filter(
-      (project) =>
-        principal.projectIds.includes("*") ||
-        principal.projectIds.includes(project.id),
+    const projects = (await this.domain.projectList()).filter((project) =>
+      hasProjectAccess(principal, project.id),
     );
     const items: Array<{
       projectId: string;

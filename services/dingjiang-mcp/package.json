@@ -9,11 +9,15 @@
     "eval": "node evals/run.mjs",
     "lint": "eslint --config ../../eslint.config.mjs src",
     "start": "node dist/server.js",
+    "start:http": "node dist/server-http.js",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@dingjiang/contracts": "workspace:*",
+    "@modelcontextprotocol/node": "2.1.2",
+    "@modelcontextprotocol/server": "2.4.0",
+    "jose": "6.2.16",
     "zod": "4.4.3"
   }
 }

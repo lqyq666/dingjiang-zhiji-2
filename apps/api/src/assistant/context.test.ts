@@ -195,11 +195,11 @@ describe("VS16 assistant context material seam", () => {
   });
 
   it("returns BODY_NOT_AVAILABLE for an active material whose body was not parsed", async () => {
-    const vs01 = {
-      project: vi.fn().mockResolvedValue(project),
-      task: vi.fn().mockResolvedValue(task),
+    const readModel = {
+      projectSourceTaskId: vi.fn().mockResolvedValue(project.sourceTaskId),
+      taskMaterials: vi.fn().mockResolvedValue(task),
     };
-    const adapter = new Vs01ContextAdapter(vs01 as never, {} as never);
+    const adapter = new Vs01ContextAdapter({ readModel } as never, {} as never);
 
     const result = await adapter.materialPreview(scope, {
       materialId: "MAT-PDF",
@@ -219,8 +219,8 @@ describe("VS16 assistant context material seam", () => {
         },
       },
     });
-    expect(vs01.project).toHaveBeenCalledWith("PRJ-OTD-001");
-    expect(vs01.task).toHaveBeenCalledWith("SO-202608136");
+    expect(readModel.projectSourceTaskId).toHaveBeenCalledWith("PRJ-OTD-001");
+    expect(readModel.taskMaterials).toHaveBeenCalledWith("SO-202608136");
   });
 
   it("returns a null latest audit for an unverified material", async () => {
@@ -241,8 +241,10 @@ describe("VS16 assistant context material seam", () => {
     };
     const adapter = new Vs01ContextAdapter(
       {
-        project: vi.fn().mockResolvedValue(project),
-        task: vi.fn().mockResolvedValue(unverifiedTask),
+        readModel: {
+          projectSourceTaskId: vi.fn().mockResolvedValue(project.sourceTaskId),
+          taskMaterials: vi.fn().mockResolvedValue(unverifiedTask),
+        },
       } as never,
       {} as never,
     );
@@ -262,8 +264,11 @@ describe("VS16 assistant context material seam", () => {
   });
 
   it("refuses a scope whose source task does not match before reading materials", async () => {
-    const vs01 = { project: vi.fn().mockResolvedValue(project), task: vi.fn() };
-    const adapter = new Vs01ContextAdapter(vs01 as never, {} as never);
+    const readModel = {
+      projectSourceTaskId: vi.fn().mockResolvedValue(project.sourceTaskId),
+      taskMaterials: vi.fn(),
+    };
+    const adapter = new Vs01ContextAdapter({ readModel } as never, {} as never);
 
     const result = await adapter.materialPreview(
       { ...scope, sourceTaskId: "SO-OTHER" },
@@ -271,6 +276,6 @@ describe("VS16 assistant context material seam", () => {
     );
 
     expect(result).toEqual({ status: "FORBIDDEN" });
-    expect(vs01.task).not.toHaveBeenCalled();
+    expect(readModel.taskMaterials).not.toHaveBeenCalled();
   });
 });

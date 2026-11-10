@@ -48,7 +48,7 @@
 ┌───────────────▼────────────────────────────────────────────────────────┐
 │                              数据层                                     │
 │  PostgreSQL 17 + pgvector · 60 张表 · 业务表全部 FORCE ROW LEVEL SECURITY │
-│  不可变 SourceVersion · 受治理命令回执 · 事件表 · 迁移 41 个（含校验和） │
+│  不可变 SourceVersion · 受治理命令回执 · 事件表 · 迁移 42 个（含校验和） │
 │  文件内容库（MaterialContentVault，按 sha256 寻址）                      │
 └────────────────────────────────────────────────────────────────────────┘
 ```
@@ -67,6 +67,8 @@
 
 MCP 不是"另一个后端"，它是**受治理命令的另一个客户端**。所以 `work.execute` 和 Web 的写按钮最终落在同一段事务代码上——这是刻意的：两个入口如果各写一套，治理规则迟早会分叉。
 
+`workspace.resume`、`work.context` 和 `evidence.bundle` 各通过一次 Integration HTTP 请求获取结果。API 按工具所需的 scope 校验权限，在 PostgreSQL 只读快照内复用来源任务和证据提案。
+
 ---
 
 ## 4. 一次受治理写入的真实路径
@@ -78,9 +80,9 @@ MCP 客户端
   │  tools/call { name: "work.execute",
   │               arguments: { requestId, expectedVersion, payload } }
   ▼
-dingjiang-mcp/src/protocol.ts        校验入参 Zod schema，注入 Bearer
-  │
-  ▼  HTTP POST /api/integration/commands
+dingjiang-mcp/src/tools/dispatch.ts  校验入参 Zod schema
+  │  client.ts 注入 Bearer
+  ▼  HTTP POST /api/integration/projects/:id/operations
 integration-http.ts                  验证 token → principal{tenant,role,scopes,projects}
   │                                   越权项目 → 403 FORBIDDEN（不是 404，不掩盖）
   ▼
@@ -154,7 +156,7 @@ KNOWLEDGE_CAPTURE       经验沉淀    ── 经验候选 → 专家审核 →
 
 - **API** 用它校验入参、定义回执形状；
 - **Web** 用它 `schema.parse()` 响应——契约漂移会在数据层炸，而不是在白屏里炸；
-- **MCP** 用 `z.toJSONSchema(schema, { io: "output" })` 派生出 25 个 `outputSchema`，让宿主知道工具返回什么。
+- **MCP** 用 `z.toJSONSchema(schema, { io: "output" })` 派生出 28 个 `outputSchema`，让宿主知道工具返回什么。
 
 一份定义、三个消费者、零重复。tier5 前端 e2e 能成立的全部前提就是这一条。
 
@@ -174,6 +176,8 @@ KNOWLEDGE_CAPTURE       经验沉淀    ── 经验候选 → 专家审核 →
 | `experience/` | 经验资产生命周期     | `approveExperienceCandidate` `retractExperience` |
 | `assistant/`  | AI 引导与反馈        | `assistProject` `createAssistantFeedback`        |
 | `tasks/`      | 任务决策与回退       | `decideTask` `revertTaskDecision`                |
+
+项目来源、材料和证据的窄查询直接复用门面持有的读模型实例。只读快照使用绑定到同一 PostgreSQL 连接的读模型。
 
 搬移的顺序是按耦合度从低到高，每一步都以全量用例做回归护栏：
 

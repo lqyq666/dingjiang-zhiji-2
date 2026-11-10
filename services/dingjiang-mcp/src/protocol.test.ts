@@ -4,11 +4,246 @@ import {
   createMcpHandler,
   dingjiangCompatibilityTools,
   dingjiangTools,
-  latestProtocolVersion,
+  legacyProtocolVersion,
   type IntegrationClient,
   type ToolDescriptor,
 } from "./protocol";
 import { IntegrationClientError, IntegrationTransportError } from "./client";
+
+const modernMeta = {
+  "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+  "io.modelcontextprotocol/clientCapabilities": {},
+};
+
+const locator = {
+  sourceObjectId: "SO-1",
+  sourceVersionId: "SV-1",
+  reference: "fixture.csv#2",
+};
+const occurredAt = "2026-08-29T04:00:00.000Z";
+const sourcePreview = "已核验的材料预览";
+const evidenceFixture = {
+  id: "E-1",
+  sourceObjectId: locator.sourceObjectId,
+  sourceVersionId: locator.sourceVersionId,
+  sourceFile: "fixture.csv",
+  sourceSheet: "Sheet1",
+  sourceRow: 2,
+  fields: { value: "按时交付" },
+  classification: "FACT" as const,
+  exactSpan: {
+    kind: "TEXT_SPAN" as const,
+    start: 0,
+    end: 4,
+    exactText: "按时交付",
+  },
+};
+const workItemFixture = {
+  id: "WI-1",
+  projectId: "PRJ-1",
+  phaseCode: "BASELINE_FACTS",
+  phaseName: "核对事实",
+  title: "核对交付记录",
+  purpose: "确认交付情况",
+  owner: "PMC",
+  origin: "LIVE",
+  status: "READY",
+  inputs: [],
+  process: [],
+  output: { expected: "交付记录", reference: null, locator: null },
+  acceptance: ["核对来源记录"],
+  progressUpdate: null,
+  completionConfirmation: null,
+  completionNote: "",
+  completedAt: null,
+  sourceRecordedAt: null,
+  reopenReason: null,
+};
+const stageFixture = {
+  id: "PHASE-1",
+  code: workItemFixture.phaseCode,
+  name: workItemFixture.phaseName,
+  purpose: "确认当前事实",
+  status: "IN_PROGRESS",
+  progress: 0,
+  completedTaskCount: 0,
+  totalTaskCount: 2,
+  gate: { status: "OPEN", label: "核对事实", returnedReason: null },
+  tasks: [workItemFixture, { ...workItemFixture, id: "WI-2" }],
+};
+const stateFixture = {
+  id: "PRJ-1",
+  sourceTaskId: "TASK-1",
+  name: "隔离演示项目",
+  status: "RUNNING",
+  progress: 0,
+  currentStage: stageFixture,
+  outcome: {
+    baseline: 80,
+    target: 90,
+    current: null,
+    status: "NOT_MEASURED",
+    conclusion: null,
+    evidenceReference: null,
+    note: null,
+    submittedAt: null,
+    acceptedAt: null,
+    locator: null,
+  },
+};
+const materialFixture = {
+  id: "M-1",
+  requirementId: "REQ-1",
+  title: "交付记录",
+  note: "",
+  kind: "UPLOADED_FILE",
+  status: "ACTIVE",
+  situationCode: "BOM_DELAY",
+  locator,
+  file: {
+    originalName: "fixture.csv",
+    mediaType: "text/csv",
+    extractionStatus: "EXTRACTED",
+    contentPreview: sourcePreview,
+    readableByAi: true,
+  },
+  verification: {
+    status: "VERIFIED",
+    version: 1,
+    note: "PMC 已核验",
+    verifiedBy: "human-pmc",
+    verifiedAt: occurredAt,
+  },
+  verificationStatus: "VERIFIED",
+  latestVerificationAudit: {
+    eventType: "MATERIAL_VERIFIED",
+    version: 1,
+    actor: "human-pmc",
+    note: "PMC 已核验",
+    occurredAt,
+  },
+  verificationEligible: true,
+  evidenceProposalVersion: 0,
+};
+const evidenceListFixture = {
+  projectId: stateFixture.id,
+  sourceTaskId: stateFixture.sourceTaskId,
+  items: [evidenceFixture],
+};
+const projectContextFixture = {
+  project: {
+    ...stateFixture,
+    phases: [stageFixture],
+    experienceSummary: [],
+    recentActivities: [],
+    latestConfirmedWorkpaper: null,
+  },
+  sourceTask: {
+    id: stateFixture.sourceTaskId,
+    status: "DECIDED",
+    facts: [
+      { label: "交付情况", value: "按时", evidenceId: evidenceFixture.id },
+    ],
+    evidence: [evidenceFixture],
+    materialGaps: [],
+    materials: [materialFixture],
+  },
+};
+const confirmedVersion = {
+  revision: 1,
+  kind: "PMC_CONFIRMED",
+  classification: "CONFIRMED_OUTPUT",
+  content: {
+    problemStatement: "核对交付情况",
+    factFindings: [{ evidenceId: evidenceFixture.id, assertion: "核对来源" }],
+    materialFindings: [],
+    hypotheses: ["来源一致"],
+    conclusion: {
+      result: "SUPPORTS",
+      statement: "已核验",
+      limitations: "仅覆盖样本",
+      nextChecks: [],
+    },
+  },
+  locator,
+  basedOnRevision: null,
+  requestedBy: "PMC",
+  createdAt: occurredAt,
+};
+const workpaperFixture = {
+  id: "WP-1",
+  projectId: stateFixture.id,
+  sourceTaskId: stateFixture.sourceTaskId,
+  workItem: {
+    id: "WI-1",
+    title: "核对交付记录",
+    status: "DONE",
+    acceptanceCriteria: ["核对来源记录"],
+  },
+  status: "CONFIRMED",
+  revision: 1,
+  current: confirmedVersion,
+  latestConfirmed: confirmedVersion,
+  history: [confirmedVersion],
+  context: {
+    facts: [
+      {
+        evidenceId: evidenceFixture.id,
+        label: "交付情况",
+        value: "按时",
+        classification: "FACT",
+        locator,
+      },
+    ],
+    materials: [
+      {
+        materialId: materialFixture.id,
+        requirementId: materialFixture.requirementId,
+        title: materialFixture.title,
+        classification: "UNVERIFIED_INPUT",
+        extractionStatus: "EXTRACTED",
+        readableByAi: true,
+        contentPreview: sourcePreview,
+        locator,
+      },
+    ],
+    materialGaps: [],
+  },
+};
+
+const materialsFixture = {
+  projectId: stateFixture.id,
+  sourceTaskId: stateFixture.sourceTaskId,
+  items: [materialFixture],
+  gaps: [],
+};
+const nextActionFixture = {
+  kind: "HUMAN_GATE_OR_REVIEW",
+  projectId: "PRJ-1",
+  title: "查看当前状态对应的人工 gate 或完成条件",
+  explanation: "项目状态为 RUNNING",
+  classification: "PROPOSAL",
+};
+const workContextFixture = {
+  projectId: stateFixture.id,
+  context: projectContextFixture,
+  state: stateFixture,
+  currentWorkItem: { projectId: stateFixture.id, item: null },
+  workItems: { projectId: stateFixture.id, items: [workItemFixture] },
+};
+const evidenceBundleFixture = {
+  projectId: stateFixture.id,
+  evidence: evidenceListFixture,
+  materials: materialsFixture,
+  workpaper: workpaperFixture,
+  proposals: [],
+};
+const workspaceFixture = {
+  ...workContextFixture,
+  ...evidenceBundleFixture,
+  projects: { items: [stateFixture], currentProjectId: stateFixture.id },
+  nextAction: nextActionFixture,
+};
 
 const client = (): IntegrationClient => ({
   listEvents: vi.fn().mockResolvedValue({ items: [] }),
@@ -18,51 +253,25 @@ const client = (): IntegrationClient => ({
   executeWork: vi.fn().mockResolvedValue({ version: 1, replayed: false }),
   verifyMaterial: vi.fn().mockResolvedValue({ version: 1 }),
   confirmEvidence: vi.fn().mockResolvedValue({ version: 1 }),
-  getEvidenceProposals: vi.fn().mockResolvedValue([]),
+  getEvidenceBundle: vi.fn().mockResolvedValue(evidenceBundleFixture),
+  getWorkContext: vi.fn().mockResolvedValue(workContextFixture),
+  getWorkspaceResume: vi.fn().mockResolvedValue(workspaceFixture),
   listProjects: vi
     .fn()
-    .mockResolvedValue({ items: [], currentProjectId: null }),
-  getCurrentProject: vi.fn().mockResolvedValue({ id: "PRJ-1" }),
-  getProjectContext: vi.fn().mockResolvedValue({ project: { id: "PRJ-1" } }),
-  getNextAction: vi.fn().mockResolvedValue({
-    kind: "HUMAN_GATE_OR_REVIEW",
-    projectId: "PRJ-1",
-    title: "查看当前状态对应的人工 gate 或完成条件",
-    explanation: "项目状态为 ACTIVE",
-    classification: "PROPOSAL",
-  }),
-  getProjectState: vi.fn().mockResolvedValue({ id: "PRJ-1" }),
+    .mockResolvedValue({ items: [stateFixture], currentProjectId: "PRJ-1" }),
+  getCurrentProject: vi.fn().mockResolvedValue(stateFixture),
+  getProjectContext: vi.fn().mockResolvedValue(projectContextFixture),
+  getNextAction: vi.fn().mockResolvedValue(nextActionFixture),
+  getProjectState: vi.fn().mockResolvedValue(stateFixture),
   getCurrentWorkItem: vi
     .fn()
     .mockResolvedValue({ projectId: "PRJ-1", item: null }),
   listProjectWorkItems: vi
     .fn()
-    .mockResolvedValue({ projectId: "PRJ-1", items: [] }),
-  listEvidence: vi.fn().mockResolvedValue({ items: [] }),
+    .mockResolvedValue({ projectId: "PRJ-1", items: [workItemFixture] }),
+  listEvidence: vi.fn().mockResolvedValue(evidenceListFixture),
   getEvidence: vi.fn().mockResolvedValue({ item: { id: "E-1" } }),
-  listTraceableMaterials: vi.fn().mockResolvedValue({
-    items: [
-      {
-        id: "M-1",
-        verification: {
-          status: "VERIFIED",
-          version: 1,
-          note: "PMC 已核验",
-          verifiedBy: "human-pmc",
-          verifiedAt: "2026-08-29T04:00:00.000Z",
-        },
-        verificationStatus: "VERIFIED",
-        latestVerificationAudit: {
-          eventType: "MATERIAL_VERIFIED",
-          version: 1,
-          actor: "human-pmc",
-          note: "PMC 已核验",
-          occurredAt: "2026-08-29T04:00:00.000Z",
-        },
-      },
-    ],
-    gaps: [],
-  }),
+  listTraceableMaterials: vi.fn().mockResolvedValue(materialsFixture),
   getMaterialPreview: vi.fn().mockResolvedValue({
     material: {
       id: "M-1",
@@ -79,7 +288,7 @@ const client = (): IntegrationClient => ({
   getSourceVersion: vi
     .fn()
     .mockResolvedValue({ locator: { sourceVersionId: "SV-1" } }),
-  getValidationWorkpaper: vi.fn().mockResolvedValue({ id: "WP-1" }),
+  getValidationWorkpaper: vi.fn().mockResolvedValue(workpaperFixture),
   searchFormalExperiences: vi.fn().mockResolvedValue({ query: "", items: [] }),
   getFormalExperience: vi.fn().mockResolvedValue({ id: "EXP-1" }),
   getExperienceEvidence: vi.fn().mockResolvedValue({ experienceId: "EXP-1" }),
@@ -98,6 +307,216 @@ const client = (): IntegrationClient => ({
     replayed: false,
     data: { status: "PROPOSAL", proposalId: "EVP-1" },
   }),
+});
+
+const callFixtureTool = async (
+  name: string,
+  integration = client(),
+  _meta?: typeof modernMeta,
+) => {
+  const response = await createMcpHandler(integration)({
+    jsonrpc: "2.0",
+    id: "aggregate-fixture",
+    method: "tools/call",
+    params: {
+      name,
+      arguments: name === "workspace.resume" ? {} : { projectId: "PRJ-1" },
+      _meta,
+    },
+  });
+  if (!response || !("result" in response))
+    throw new Error("Missing tool result");
+  return response.result as {
+    content: Array<{ text: string }>;
+    structuredContent?: Record<string, unknown>;
+    isError?: boolean;
+  };
+};
+
+describe("aggregate tool outputs", () => {
+  it("keeps work items and traceable evidence while removing duplicate workspace fields", async () => {
+    const result = await callFixtureTool("workspace.resume");
+
+    expect(result.isError).toBeUndefined();
+    expect(result.structuredContent).toMatchObject({
+      projects: {
+        items: [{ id: "PRJ-1", currentStage: { code: "BASELINE_FACTS" } }],
+      },
+      state: { currentStage: { code: "BASELINE_FACTS" } },
+      context: {
+        sourceTask: { facts: [{ evidenceId: "E-1" }], materialGaps: [] },
+      },
+      workItems: { items: [{ id: "WI-1", owner: "PMC" }] },
+      evidence: { items: [evidenceFixture] },
+      materials: { items: [{ file: { contentPreview: sourcePreview } }] },
+      workpaper: { latestConfirmed: { revision: 1, locator } },
+      nextAction: { classification: "PROPOSAL" },
+    });
+    for (const field of [
+      "projects.items.0.currentStage.tasks",
+      "state.currentStage.tasks",
+      "context.project.currentStage.tasks",
+      "context.project.phases.0.tasks",
+      "context.sourceTask.evidence",
+      "context.sourceTask.materials",
+      "workpaper.history",
+      "workpaper.context.materials.0.contentPreview",
+    ])
+      expect(result.structuredContent).not.toHaveProperty(field);
+    expect(JSON.parse(result.content[0]!.text)).toEqual(
+      result.structuredContent,
+    );
+  });
+
+  it("retains material metadata and evidence in work.context", async () => {
+    const integration = client();
+    const result = await callFixtureTool("work.context", integration);
+    expect(result.isError).toBeUndefined();
+    expect(integration.getWorkContext).toHaveBeenCalledExactlyOnceWith("PRJ-1");
+    expect(integration.getProjectContext).not.toHaveBeenCalled();
+    expect(integration.getCurrentWorkItem).not.toHaveBeenCalled();
+    expect(integration.listProjectWorkItems).not.toHaveBeenCalled();
+    expect(result.structuredContent).toMatchObject({
+      state: {
+        id: "PRJ-1",
+        sourceTaskId: "TASK-1",
+        currentStage: { code: "BASELINE_FACTS" },
+      },
+      context: {
+        sourceTask: {
+          evidence: [evidenceFixture],
+          materials: [{ id: "M-1", locator, file: { readableByAi: true } }],
+        },
+      },
+    });
+    expect(result.structuredContent).not.toHaveProperty(
+      "context.sourceTask.materials.0.file.contentPreview",
+    );
+
+    const detail = await callFixtureTool("get_project_context");
+    expect(detail.structuredContent).toHaveProperty(
+      "sourceTask.materials.0.file.contentPreview",
+      sourcePreview,
+    );
+    expect(detail.structuredContent).toHaveProperty("project.phases.0.tasks");
+  });
+
+  it.each(["workspace.resume", "work.context", "evidence.bundle"])(
+    "bounds the full UTF-8 result for %s",
+    async (name) => {
+      const integration = client();
+      const withValue = (characters: number) => ({
+        ...evidenceFixture,
+        fields: { value: "汉".repeat(characters) },
+      });
+      const largeEvidence = {
+        ...evidenceListFixture,
+        items: [withValue(90_000)],
+      };
+      integration.getEvidenceBundle = vi.fn().mockResolvedValue({
+        ...evidenceBundleFixture,
+        evidence: largeEvidence,
+      });
+      integration.getWorkspaceResume = vi.fn().mockResolvedValue({
+        ...workspaceFixture,
+        evidence: largeEvidence,
+      });
+      integration.getWorkContext = vi.fn().mockResolvedValue({
+        ...workContextFixture,
+        context: {
+          ...projectContextFixture,
+          sourceTask: {
+            ...projectContextFixture.sourceTask,
+            evidence: [withValue(90_000)],
+          },
+        },
+      });
+      const result = await callFixtureTool(name, integration);
+
+      expect(result.isError).toBe(true);
+      expect(result).not.toHaveProperty("structuredContent");
+      expect(JSON.parse(result.content[0]!.text)).toMatchObject({
+        code: "AGGREGATE_RESULT_TOO_LARGE",
+        limitBytes: 512 * 1024,
+        retryable: false,
+        requiresHuman: false,
+      });
+      expect(result.content[0]!.text).not.toContain("汉汉汉");
+    },
+  );
+
+  it("counts JSON escaping in the text copy of a bounded result", async () => {
+    const integration = client();
+    integration.getEvidenceBundle = vi.fn().mockResolvedValue({
+      ...evidenceBundleFixture,
+      evidence: {
+        ...evidenceListFixture,
+        items: [{ ...evidenceFixture, fields: { value: '"'.repeat(100_000) } }],
+      },
+    });
+
+    const result = await callFixtureTool("evidence.bundle", integration);
+    expect(result.isError).toBe(true);
+    expect(JSON.parse(result.content[0]!.text)).toMatchObject({
+      code: "AGGREGATE_RESULT_TOO_LARGE",
+    });
+  });
+
+  it("keeps an intact evidence value below the response limit", async () => {
+    const integration = client();
+    const value = "汉".repeat(80_000);
+    integration.getEvidenceBundle = vi.fn().mockResolvedValue({
+      ...evidenceBundleFixture,
+      evidence: {
+        ...evidenceListFixture,
+        items: [{ ...evidenceFixture, fields: { value } }],
+      },
+    });
+
+    const result = await callFixtureTool("evidence.bundle", integration);
+    expect(result.isError).toBeUndefined();
+    expect(result.structuredContent).toMatchObject({
+      evidence: { items: [{ fields: { value } }] },
+    });
+    expect(
+      Buffer.byteLength(JSON.stringify(result), "utf8"),
+    ).toBeLessThanOrEqual(512 * 1024);
+  });
+  it("counts the modern envelope in the same 512 KiB result limit", async () => {
+    const integration = client();
+    const setEvidenceValue = (value: string) => {
+      integration.getEvidenceBundle = vi.fn().mockResolvedValue({
+        ...evidenceBundleFixture,
+        evidence: {
+          ...evidenceListFixture,
+          items: [{ ...evidenceFixture, fields: { value } }],
+        },
+      });
+    };
+    const limit = 512 * 1024;
+    setEvidenceValue("");
+    const baseline = await callFixtureTool("evidence.bundle", integration);
+    const baselineBytes = Buffer.byteLength(JSON.stringify(baseline), "utf8");
+    // Each ASCII character appears once in structuredContent and once in text.
+    setEvidenceValue("x".repeat(Math.floor((limit - baselineBytes) / 2)));
+
+    const legacy = await callFixtureTool("evidence.bundle", integration);
+    expect(legacy.isError).toBeUndefined();
+    const legacyBytes = Buffer.byteLength(JSON.stringify(legacy), "utf8");
+    expect(legacyBytes).toBeGreaterThan(limit - 2);
+    expect(legacyBytes).toBeLessThanOrEqual(limit);
+
+    const modern = await callFixtureTool(
+      "evidence.bundle",
+      integration,
+      modernMeta,
+    );
+    expect(modern.isError).toBe(true);
+    expect(JSON.parse(modern.content[0]!.text)).toMatchObject({
+      code: "AGGREGATE_RESULT_TOO_LARGE",
+      limitBytes: limit,
+    });
+  });
 });
 
 describe("dingjiang-mcp protocol", () => {
@@ -188,7 +607,7 @@ describe("dingjiang-mcp protocol", () => {
     expect(integration.executeWork).toHaveBeenCalledTimes(1);
   });
 
-  it("aggregates a complete workspace facade without widening write access", async () => {
+  it("reads the workspace through one Integration call", async () => {
     const integration = client();
     const response = await createMcpHandler(integration)({
       jsonrpc: "2.0",
@@ -204,8 +623,11 @@ describe("dingjiang-mcp protocol", () => {
         },
       },
     });
-    expect(integration.getProjectContext).toHaveBeenCalledWith("PRJ-1");
-    expect(integration.listEvidence).toHaveBeenCalledWith("PRJ-1");
+    expect(integration.getWorkspaceResume).toHaveBeenCalledExactlyOnceWith();
+    expect(integration.listProjects).not.toHaveBeenCalled();
+    expect(integration.getCurrentWorkItem).not.toHaveBeenCalled();
+    expect(integration.getProjectContext).not.toHaveBeenCalled();
+    expect(integration.listEvidence).not.toHaveBeenCalled();
     expect(integration.proposeWorkpaper).not.toHaveBeenCalled();
     expect(integration.createMaterial).not.toHaveBeenCalled();
     expect(integration.proposeEvidence).not.toHaveBeenCalled();
@@ -230,29 +652,223 @@ describe("dingjiang-mcp protocol", () => {
     }
   });
 
-  it("fails closed when current project and current work item drift", async () => {
-    const integration = client();
-    vi.mocked(integration.getCurrentWorkItem).mockResolvedValue({
-      projectId: "PRJ-OTHER",
-      item: null,
-    });
-    const response = await createMcpHandler(integration)({
+  it.each([
+    { surface: "business", tools: dingjiangTools, readCount: 7 },
+    {
+      surface: "compatibility",
+      tools: dingjiangCompatibilityTools,
+      readCount: 17,
+    },
+  ])(
+    "exposes only reads and rejects direct writes in the $surface read-only session",
+    async ({ surface, tools, readCount }) => {
+      vi.stubEnv("DINGJIANG_MCP_TOOL_SURFACE", surface);
+      vi.stubEnv("DINGJIANG_MCP_READ_ONLY", "1");
+      const integration = client();
+      const clientForRead = vi.fn(() => integration);
+      const signal = new AbortController().signal;
+      try {
+        const handler = createMcpHandler(integration, undefined, clientForRead);
+        // Even the first handshake must use the startup policy.
+        vi.stubEnv("DINGJIANG_MCP_READ_ONLY", "0");
+        const initialized = await handler({
+          jsonrpc: "2.0",
+          id: "init",
+          method: "initialize",
+          params: { protocolVersion: legacyProtocolVersion },
+        });
+        const { instructions } = (
+          initialized as {
+            result: { instructions: string };
+          }
+        ).result;
+        expect(instructions).toContain("只读");
+        expect(instructions).toContain("PROPOSAL");
+        expect(instructions).not.toContain("work.execute");
+
+        const listed = await handler({
+          jsonrpc: "2.0",
+          id: "list",
+          method: "tools/list",
+        });
+        const expectedReads = tools.filter(
+          (tool) => tool.annotations.readOnlyHint,
+        );
+        expect(expectedReads).toHaveLength(readCount);
+        expect(listed).toMatchObject({ result: { tools: expectedReads } });
+
+        for (const { name } of dingjiangTools.filter(
+          (tool) => !tool.annotations.readOnlyHint,
+        )) {
+          const denied = await handler(
+            {
+              jsonrpc: "2.0",
+              id: name,
+              method: "tools/call",
+              params: { name, arguments: {} },
+            },
+            signal,
+          );
+          expect(denied, name).toMatchObject({
+            error: { code: -32602, data: { code: "UNKNOWN_TOOL", tool: name } },
+          });
+        }
+        expect(clientForRead).not.toHaveBeenCalled();
+
+        const read = await handler(
+          {
+            jsonrpc: "2.0",
+            id: "read",
+            method: "tools/call",
+            params: { name: "workspace.events", arguments: {} },
+          },
+          signal,
+        );
+        expect(read).toMatchObject({
+          result: { structuredContent: { items: [] } },
+        });
+        expect(clientForRead).toHaveBeenCalledExactlyOnceWith(signal);
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    },
+  );
+
+  it("advertises the modern tool capability and governance instructions", async () => {
+    const handler = createMcpHandler(client());
+    const _meta = modernMeta;
+    const discovered = await handler({
       jsonrpc: "2.0",
-      id: "workspace-drift",
-      method: "tools/call",
-      params: { name: "workspace.resume", arguments: {} },
+      id: 1,
+      method: "server/discover",
+      params: { _meta },
     });
-    expect(response).toMatchObject({
+    expect(discovered).toEqual({
+      jsonrpc: "2.0",
+      id: 1,
       result: {
-        isError: true,
-        content: [
-          expect.objectContaining({
-            text: expect.stringContaining("当前项目与当前事项不一致"),
-          }),
-        ],
-        structuredContent: { code: "CONTEXT_DRIFT" },
+        resultType: "complete",
+        supportedVersions: ["2026-07-28"],
+        capabilities: { tools: {} },
+        instructions: expect.stringContaining("PROPOSAL"),
+        ttlMs: 0,
+        cacheScope: "private",
+        _meta: {
+          "io.modelcontextprotocol/serverInfo": {
+            name: "dingjiang-mcp",
+            version: expect.any(String),
+          },
+        },
       },
     });
+
+    const listed = await handler({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tools/list",
+      params: { _meta },
+    });
+    expect(listed).toMatchObject({
+      result: { resultType: "complete", tools: dingjiangTools, ttlMs: 0 },
+    });
+  });
+
+  it("serves a modern tool call directly and requires metadata on later calls", async () => {
+    const integration = client();
+    const handler = createMcpHandler(integration);
+    const result = await handler({
+      jsonrpc: "2.0",
+      id: "direct",
+      method: "tools/call",
+      params: {
+        name: "workspace.events",
+        arguments: {},
+        _meta: modernMeta,
+      },
+    });
+    expect(result).toMatchObject({
+      result: {
+        resultType: "complete",
+        _meta: {
+          "io.modelcontextprotocol/serverInfo": { name: "dingjiang-mcp" },
+        },
+        structuredContent: { items: [] },
+      },
+    });
+
+    const missing = await handler({
+      jsonrpc: "2.0",
+      id: "missing",
+      method: "tools/call",
+      params: { name: "workspace.events" },
+    });
+    expect(missing).toMatchObject({ error: { code: -32602 } });
+    expect(integration.listEvents).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    { "io.modelcontextprotocol/protocolVersion": "2026-07-28" },
+    { "io.modelcontextprotocol/clientCapabilities": {} },
+    {
+      "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+      "io.modelcontextprotocol/clientCapabilities": [],
+    },
+  ])("rejects malformed modern metadata before dispatch", async (_meta) => {
+    const integration = client();
+    const response = await createMcpHandler(integration)({
+      jsonrpc: "2.0",
+      id: 3,
+      method: "tools/call",
+      params: { name: "workspace.events", _meta },
+    });
+    expect(response).toMatchObject({ error: { code: -32602 } });
+    expect(integration.listEvents).not.toHaveBeenCalled();
+  });
+
+  it("reports unsupported request versions without dispatching the tool", async () => {
+    const integration = client();
+    const response = await createMcpHandler(integration)({
+      jsonrpc: "2.0",
+      id: 4,
+      method: "tools/call",
+      params: {
+        name: "workspace.events",
+        _meta: {
+          "io.modelcontextprotocol/protocolVersion": "2099-01-01",
+          "io.modelcontextprotocol/clientCapabilities": {},
+        },
+      },
+    });
+    expect(response).toEqual({
+      jsonrpc: "2.0",
+      id: 4,
+      error: {
+        code: -32022,
+        message: "Unsupported protocol version",
+        data: { supported: ["2026-07-28"], requested: "2099-01-01" },
+      },
+    });
+    expect(integration.listEvents).not.toHaveBeenCalled();
+  });
+
+  it("allows a legacy handshake after a modern discovery probe", async () => {
+    const handler = createMcpHandler(client());
+    await handler({
+      jsonrpc: "2.0",
+      id: 5,
+      method: "server/discover",
+      params: { _meta: modernMeta },
+    });
+    const initialized = await handler({
+      jsonrpc: "2.0",
+      id: 6,
+      method: "initialize",
+      params: { protocolVersion: "2025-06-18" },
+    });
+    expect(initialized).toMatchObject({
+      result: { protocolVersion: "2025-06-18" },
+    });
+    expect(initialized).not.toHaveProperty("result.resultType");
   });
 
   it("does not leak an arbitrary exception message to the host", async () => {
@@ -278,22 +894,23 @@ describe("dingjiang-mcp protocol", () => {
     expect(result.structuredContent?.code).toBe("TOOL_UNAVAILABLE");
   });
 
-  it("rejects an unknown tool as a protocol parameter error", async () => {
-    const response = await createMcpHandler(client())({
-      jsonrpc: "2.0",
-      id: "unknown-tool",
-      method: "tools/call",
-      params: { name: "nope.nope", arguments: {} },
-    });
-    // -32602, not a tool result: a client must be able to tell "no such tool"
-    // from "the tool ran and failed".
-    expect(response).toMatchObject({
-      error: {
-        code: -32602,
-        data: { code: "UNKNOWN_TOOL", tool: "nope.nope" },
-      },
-    });
-  });
+  it.each(["nope.nope", "__proto__", "constructor"])(
+    "rejects the unknown tool %s as a protocol parameter error",
+    async (name) => {
+      const response = await createMcpHandler(client())({
+        jsonrpc: "2.0",
+        id: "unknown-tool",
+        method: "tools/call",
+        params: { name, arguments: {} },
+      });
+      expect(response).toMatchObject({
+        error: {
+          code: -32602,
+          data: { code: "UNKNOWN_TOOL", tool: name },
+        },
+      });
+    },
+  );
 
   it.each([
     ["a non-object payload", null],
@@ -339,7 +956,7 @@ describe("dingjiang-mcp protocol", () => {
       jsonrpc: "2.0",
       id: "init-1",
       method: "initialize",
-      params: { protocolVersion: latestProtocolVersion },
+      params: { protocolVersion: legacyProtocolVersion },
     });
     const second = await handler({
       jsonrpc: "2.0",
@@ -347,9 +964,9 @@ describe("dingjiang-mcp protocol", () => {
       method: "initialize",
       params: { protocolVersion: "1999-01-01" },
     });
-    expect(revisionOf(first)).toBe(latestProtocolVersion);
+    expect(revisionOf(first)).toBe(legacyProtocolVersion);
     // A second handshake must not change what the session was promised.
-    expect(revisionOf(second)).toBe(latestProtocolVersion);
+    expect(revisionOf(second)).toBe(legacyProtocolVersion);
 
     const listed = await handler({
       jsonrpc: "2.0",
@@ -748,48 +1365,62 @@ describe("dingjiang-mcp optional constituents", () => {
     correlationId: "6f1c2f7e-1111-4222-8333-444455556666",
   });
 
-  const callResume = async (integration: IntegrationClient) => {
-    const response = await createMcpHandler(integration)({
-      jsonrpc: "2.0",
-      id: "resume",
-      method: "tools/call",
-      params: { name: "workspace.resume", arguments: {} },
+  it.each(["NOT_FOUND", "FORBIDDEN"] as const)(
+    "passes a workspace %s through without fallback requests",
+    async (code) => {
+      const integration = client();
+      vi.mocked(integration.getWorkspaceResume).mockRejectedValue(
+        new IntegrationClientError(failure(code)),
+      );
+      const result = await callFixtureTool("workspace.resume", integration);
+      expect(result.isError).toBe(true);
+      expect(result.structuredContent).toMatchObject({ code });
+      expect(integration.listProjects).not.toHaveBeenCalled();
+    },
+  );
+
+  it("includes an empty workpaper for an authorized workspace snapshot", async () => {
+    const integration = client();
+    integration.getWorkspaceResume = vi.fn().mockResolvedValue({
+      ...workspaceFixture,
+      workpaper: null,
     });
-    const result = (
-      response as {
-        result?: { isError?: boolean; content?: Array<{ text?: string }> };
-      }
-    ).result;
-    return {
-      isError: Boolean(result?.isError),
-      payload: JSON.parse(result?.content?.[0]?.text ?? "{}") as Record<
-        string,
-        unknown
-      >,
-    };
-  };
-
-  it("resumes a project that has no workpaper yet instead of failing", async () => {
-    const integration = client();
-    integration.getValidationWorkpaper = vi
-      .fn()
-      .mockRejectedValue(new IntegrationClientError(failure("NOT_FOUND")));
-    const resumed = await callResume(integration);
-    // A freshly created project has no workpaper. The aggregate must report
-    // its absence, not collapse: resume is needed most at that moment.
-    expect(resumed.isError).toBe(false);
-    expect(resumed.payload.workpaper).toBeNull();
-    expect(resumed.payload.projectId).toBe("PRJ-1");
+    const result = await callFixtureTool("workspace.resume", integration);
+    expect(result.isError).toBeUndefined();
+    expect(result.structuredContent).toMatchObject({
+      projectId: "PRJ-1",
+      workpaper: null,
+    });
   });
 
-  it("still fails closed when the constituent is forbidden", async () => {
+  it("reads a nullable workpaper as part of one evidence bundle", async () => {
     const integration = client();
-    integration.getValidationWorkpaper = vi
-      .fn()
-      .mockRejectedValue(new IntegrationClientError(failure("FORBIDDEN")));
-    const resumed = await callResume(integration);
-    // A missing scope must not be reported as "no workpaper yet".
-    expect(resumed.isError).toBe(true);
-    expect(resumed.payload.code).toBe("FORBIDDEN");
+    integration.getEvidenceBundle = vi.fn().mockResolvedValue({
+      ...evidenceBundleFixture,
+      workpaper: null,
+    });
+    const result = await callFixtureTool("evidence.bundle", integration);
+    expect(result.isError).toBeUndefined();
+    expect(result.structuredContent).toMatchObject({ workpaper: null });
+    expect(integration.getEvidenceBundle).toHaveBeenCalledExactlyOnceWith(
+      "PRJ-1",
+    );
+    expect(integration.listEvidence).not.toHaveBeenCalled();
+    expect(integration.listTraceableMaterials).not.toHaveBeenCalled();
+    expect(integration.getValidationWorkpaper).not.toHaveBeenCalled();
   });
+
+  it.each(["NOT_FOUND", "FORBIDDEN"] as const)(
+    "passes a project evidence bundle %s through without fallback reads",
+    async (code) => {
+      const integration = client();
+      vi.mocked(integration.getEvidenceBundle).mockRejectedValue(
+        new IntegrationClientError(failure(code)),
+      );
+      const result = await callFixtureTool("evidence.bundle", integration);
+      expect(result.isError).toBe(true);
+      expect(result.structuredContent).toMatchObject({ code });
+      expect(integration.getValidationWorkpaper).not.toHaveBeenCalled();
+    },
+  );
 });

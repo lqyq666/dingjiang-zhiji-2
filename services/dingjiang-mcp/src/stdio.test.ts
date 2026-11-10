@@ -1,12 +1,17 @@
 import { describe, expect, it, vi } from "vitest";
 
-import type { JsonRpcRequest, JsonRpcResponse } from "./protocol";
+import {
+  isReadOnlyToolCall,
+  type JsonRpcRequest,
+  type JsonRpcResponse,
+} from "./protocol";
 import {
   createStdioDispatcher,
   DEFAULT_MAX_LINE_BYTES,
   DEFAULT_MAX_PENDING_REQUESTS,
   resolveMaxLineBytes,
   resolveMaxPendingRequests,
+  type StdioHandler,
 } from "./stdio";
 
 const line = (id: number | string, method = "ping"): string =>
@@ -18,13 +23,34 @@ const success = (id: JsonRpcResponse["id"]): JsonRpcResponse => ({
   result: {},
 });
 
+const toolLine = (id: number | string, name: string): string =>
+  JSON.stringify({
+    jsonrpc: "2.0",
+    id,
+    method: "tools/call",
+    params: { name },
+  });
+
+const cancel = (requestId: string | number): string =>
+  JSON.stringify({
+    jsonrpc: "2.0",
+    method: "notifications/cancelled",
+    params: { requestId, reason: "The caller no longer needs the result" },
+  });
+
+const deferred = () => {
+  let release!: () => void;
+  const promise = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  return { promise, release };
+};
+
+const nextTurn = () => new Promise<void>((resolve) => setImmediate(resolve));
+
 const setup = (
-  handler: (request: JsonRpcRequest) => Promise<JsonRpcResponse | undefined>,
-  options: {
-    maxLineBytes?: number;
-    maxPendingRequests?: number;
-    onError?: (error: unknown) => void;
-  } = {},
+  handler: StdioHandler,
+  options: Parameters<typeof createStdioDispatcher>[2] = {},
 ) => {
   const responses: JsonRpcResponse[] = [];
   const dispatch = createStdioDispatcher(
@@ -106,6 +132,159 @@ describe("dingjiang-mcp stdio dispatcher", () => {
     await dispatch.drain();
 
     expect(responses.map((response) => response.id)).toEqual([1, 2, 3]);
+  });
+
+  it("fills freed read slots without releasing responses out of order", async () => {
+    const reads = Array.from({ length: 5 }, deferred);
+    const started: number[] = [];
+    const { dispatch, responses } = setup(
+      async (request) => {
+        const id = Number(request.id);
+        started.push(id);
+        await reads[id - 1]!.promise;
+        return success(id);
+      },
+      { maxPendingRequests: 5, isReadOnlyRequest: isReadOnlyToolCall },
+    );
+
+    for (let id = 1; id <= reads.length; id++) {
+      dispatch(toolLine(id, "workspace.events"));
+    }
+    await nextTurn();
+    const atCapacity = [...started];
+    reads[1]!.release();
+    await nextTurn();
+    const afterOneFinished = [...started];
+    const repliesWhileFirstPending = responses.length;
+    dispatch(toolLine(6, "workspace.events"));
+
+    for (const read of reads) read.release();
+    await dispatch.drain();
+    expect(atCapacity).toEqual([1, 2, 3, 4]);
+    expect(afterOneFinished).toEqual([1, 2, 3, 4, 5]);
+    expect(repliesWhileFirstPending).toBe(0);
+    expect(responses[0]).toMatchObject({
+      id: 6,
+      error: { data: { code: "QUEUE_OVERFLOW" } },
+    });
+    expect(responses.slice(1).map((response) => response.id)).toEqual([
+      1, 2, 3, 4, 5,
+    ]);
+  });
+
+  it("cancels active and queued reads at capacity without cancelling a write", async () => {
+    const releaseReads = deferred();
+    const started: number[] = [];
+    const aborted: number[] = [];
+    const writeSignals: Array<AbortSignal | undefined> = [];
+    const { dispatch, responses } = setup(
+      async (request, signal) => {
+        const id = Number(request.id);
+        started.push(id);
+        if (id === 6) writeSignals.push(signal);
+        else {
+          await new Promise<void>((resolve) => {
+            void releaseReads.promise.then(resolve);
+            signal?.addEventListener(
+              "abort",
+              () => {
+                aborted.push(id);
+                resolve();
+              },
+              { once: true },
+            );
+          });
+        }
+        return success(id);
+      },
+      {
+        maxPendingRequests: 6,
+        isReadOnlyRequest: isReadOnlyToolCall,
+      },
+    );
+
+    for (let id = 1; id <= 5; id++) dispatch(toolLine(id, "workspace.events"));
+    dispatch(toolLine(6, "work.execute"));
+    await nextTurn();
+    dispatch(cancel(5));
+    dispatch(cancel(1));
+    dispatch(cancel(6));
+    dispatch(cancel("2"));
+    dispatch(cancel(99));
+    await nextTurn();
+    const whileReadsAreActive = [...aborted];
+
+    releaseReads.release();
+    await dispatch.drain();
+    expect(whileReadsAreActive).toEqual([1]);
+    expect(started).toEqual([1, 2, 3, 4, 6]);
+    expect(writeSignals).toEqual([undefined]);
+    expect(responses.map((response) => response.id)).toEqual([2, 3, 4, 6]);
+  });
+
+  it("drops a cancelled reply that finished behind an earlier read", async () => {
+    const first = deferred();
+    const started: number[] = [];
+    const { dispatch, responses } = setup(
+      async (request) => {
+        const id = Number(request.id);
+        started.push(id);
+        if (id === 1) await first.promise;
+        return success(id);
+      },
+      { isReadOnlyRequest: isReadOnlyToolCall },
+    );
+    dispatch(toolLine(1, "workspace.events"));
+    dispatch(toolLine(2, "workspace.events"));
+    await nextTurn();
+    dispatch(cancel(2));
+
+    first.release();
+    await dispatch.drain();
+    expect(started).toEqual([1, 2]);
+    expect(responses.map((response) => response.id)).toEqual([1]);
+  });
+
+  it("waits for earlier reads before a write and keeps later calls behind it", async () => {
+    const gates = new Map([1, 3, 4].map((id) => [id, deferred()]));
+    const started: number[] = [];
+    const { dispatch, responses } = setup(
+      async (request) => {
+        const id = Number(request.id);
+        started.push(id);
+        await gates.get(id)?.promise;
+        return success(id);
+      },
+      { isReadOnlyRequest: isReadOnlyToolCall },
+    );
+
+    dispatch(toolLine(1, "workspace.events"));
+    dispatch(toolLine(2, "workspace.events"));
+    dispatch(toolLine(3, "work.execute"));
+    dispatch(toolLine(4, "evidence.confirm"));
+    dispatch(toolLine(5, "work.operations"));
+    await nextTurn();
+    const duringReads = [...started];
+
+    gates.get(1)!.release();
+    await nextTurn();
+    dispatch(cancel(3));
+    await nextTurn();
+    const duringFirstWrite = [...started];
+    const repliesDuringFirstWrite = responses.map((response) => response.id);
+
+    gates.get(3)!.release();
+    await nextTurn();
+    const duringSecondWrite = [...started];
+    gates.get(4)!.release();
+    await dispatch.drain();
+
+    expect(duringReads).toEqual([1, 2]);
+    expect(duringFirstWrite).toEqual([1, 2, 3]);
+    expect(repliesDuringFirstWrite).toEqual([1, 2]);
+    expect(duringSecondWrite).toEqual([1, 2, 3, 4]);
+    expect(started).toEqual([1, 2, 3, 4, 5]);
+    expect(responses.map((response) => response.id)).toEqual(started);
   });
 
   it("never runs two governed calls concurrently", async () => {

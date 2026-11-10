@@ -11,6 +11,7 @@ import {
   taskMaterialVerificationStatusSchema,
 } from "./vs01";
 import { validationWorkpaperViewSchema } from "./vs16";
+import { evidenceProposalReviewListSchema } from "./evidence-intake";
 
 const idSchema = z.string().trim().min(1);
 
@@ -284,6 +285,79 @@ export const nextActionSchema = z
   .strict();
 
 export type NextAction = z.infer<typeof nextActionSchema>;
+
+// Aggregate replies keep one copy of each domain's details.
+const stageSummary = integrationProjectStateSchema.shape.currentStage
+  .unwrap()
+  .omit({ tasks: true });
+const projectStateSummary = integrationProjectStateSchema.extend({
+  currentStage: stageSummary.nullable(),
+});
+
+const contextShape = integrationProjectContextSchema.shape;
+const materialSummary = integrationSafeMaterialSchema.extend({
+  file: integrationSafeMaterialSchema.shape.file
+    .unwrap()
+    .omit({ contentPreview: true })
+    .nullable(),
+});
+const projectContextSummary = integrationProjectContextSchema.extend({
+  project: contextShape.project.extend({
+    currentStage: stageSummary.nullable(),
+    phases: z.array(stageSummary),
+  }),
+  sourceTask: contextShape.sourceTask.extend({
+    materials: z.array(materialSummary),
+  }),
+});
+
+const workpaperContext = integrationValidationWorkpaperSchema.shape.context;
+const workpaperMaterialSummary = z.object(
+  workpaperContext.shape.materials.element.omit({ contentPreview: true }).shape,
+);
+const workpaperSummary = z.object({
+  ...integrationValidationWorkpaperSchema.omit({ history: true }).shape,
+  context: workpaperContext.extend({
+    materials: z.array(workpaperMaterialSummary),
+  }),
+});
+
+export const integrationWorkContextSchema = z
+  .object({
+    projectId: z.string(),
+    context: projectContextSummary,
+    state: projectStateSummary,
+    currentWorkItem: integrationCurrentWorkItemSchema,
+    workItems: integrationWorkItemListSchema,
+  })
+  .strict();
+
+export const integrationEvidenceBundleSchema = z
+  .object({
+    projectId: z.string(),
+    evidence: integrationEvidenceListSchema,
+    materials: integrationMaterialListSchema,
+    workpaper: workpaperSummary.nullable(),
+    proposals: evidenceProposalReviewListSchema,
+  })
+  .strict();
+
+export const integrationWorkspaceResumeSchema = z
+  .object({
+    projects: integrationProjectListSchema.extend({
+      items: z.array(projectStateSummary),
+    }),
+    ...integrationWorkContextSchema.shape,
+    ...integrationEvidenceBundleSchema.shape,
+    context: projectContextSummary.extend({
+      sourceTask: contextShape.sourceTask.omit({
+        evidence: true,
+        materials: true,
+      }),
+    }),
+    nextAction: nextActionSchema,
+  })
+  .strict();
 
 export const integrationFailureEnvelopeSchema = z.object({
   ok: z.literal(false),

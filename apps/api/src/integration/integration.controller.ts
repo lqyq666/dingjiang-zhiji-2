@@ -19,7 +19,6 @@ import {
   type IntegrationRequest,
 } from "./integration-http";
 import { IntegrationService } from "./integration.service";
-import { NextActionService } from "./next-action.service";
 
 @Controller("integration")
 @UseGuards(IntegrationAuthGuard)
@@ -28,8 +27,6 @@ export class IntegrationController {
   constructor(
     @Inject(IntegrationService)
     private readonly integration: IntegrationService,
-    @Inject(NextActionService)
-    private readonly nextActions: NextActionService,
   ) {}
 
   private success(request: IntegrationRequest, data: unknown) {
@@ -108,6 +105,14 @@ export class IntegrationController {
     );
   }
 
+  @Get("workspace/resume")
+  async workspaceResume(@Req() request: IntegrationRequest) {
+    return this.success(
+      request,
+      await this.integration.workspaceResume(integrationPrincipal(request)),
+    );
+  }
+
   @Get("projects")
   async projects(@Req() request: IntegrationRequest) {
     return this.success(
@@ -154,6 +159,28 @@ export class IntegrationController {
     );
   }
 
+  @Get("projects/:id/work-context")
+  async workContext(
+    @Param("id") id: string,
+    @Req() request: IntegrationRequest,
+  ) {
+    return this.success(
+      request,
+      await this.integration.workContext(integrationPrincipal(request), id),
+    );
+  }
+
+  @Get("projects/:id/evidence-bundle")
+  async evidenceBundle(
+    @Param("id") id: string,
+    @Req() request: IntegrationRequest,
+  ) {
+    return this.success(
+      request,
+      await this.integration.evidenceBundle(integrationPrincipal(request), id),
+    );
+  }
+
   @Get("projects/:id/next-action")
   async nextAction(
     @Param("id") id: string,
@@ -161,7 +188,7 @@ export class IntegrationController {
   ) {
     return this.success(
       request,
-      await this.nextActions.derive(integrationPrincipal(request), id),
+      await this.integration.nextAction(integrationPrincipal(request), id),
     );
   }
 

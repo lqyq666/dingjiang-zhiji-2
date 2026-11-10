@@ -8,11 +8,49 @@
       "allowedActions": []
     },
     "listProjects": {
-      "items": [],
+      "items": [
+        {
+          "id": "PRJ-DEMO",
+          "sourceTaskId": "TASK-DEMO",
+          "name": "隔离演示项目",
+          "status": "RUNNING",
+          "progress": 0,
+          "currentStage": null,
+          "outcome": {
+            "baseline": 80,
+            "target": 90,
+            "current": null,
+            "status": "NOT_MEASURED",
+            "conclusion": null,
+            "evidenceReference": null,
+            "note": null,
+            "submittedAt": null,
+            "acceptedAt": null,
+            "locator": null
+          }
+        }
+      ],
       "currentProjectId": "PRJ-DEMO"
     },
     "getCurrentProject": {
-      "id": "PRJ-DEMO"
+      "id": "PRJ-DEMO",
+      "sourceTaskId": "TASK-DEMO",
+      "name": "隔离演示项目",
+      "status": "RUNNING",
+      "progress": 0,
+      "currentStage": null,
+      "outcome": {
+        "baseline": 80,
+        "target": 90,
+        "current": null,
+        "status": "NOT_MEASURED",
+        "conclusion": null,
+        "evidenceReference": null,
+        "note": null,
+        "submittedAt": null,
+        "acceptedAt": null,
+        "locator": null
+      }
     },
     "getCurrentWorkItem": {
       "projectId": "PRJ-DEMO",
@@ -21,29 +59,136 @@
     "getProjectContext": {
       "project": {
         "id": "PRJ-DEMO",
-        "name": "隔离演示项目"
+        "name": "隔离演示项目",
+        "status": "RUNNING",
+        "currentStage": null,
+        "progress": 0,
+        "phases": [],
+        "outcome": {
+          "baseline": 80,
+          "target": 90,
+          "current": null,
+          "status": "NOT_MEASURED",
+          "conclusion": null,
+          "evidenceReference": null,
+          "note": null,
+          "submittedAt": null,
+          "acceptedAt": null,
+          "locator": null
+        },
+        "experienceSummary": [],
+        "recentActivities": [],
+        "latestConfirmedWorkpaper": null
+      },
+      "sourceTask": {
+        "id": "TASK-DEMO",
+        "status": "DECIDED",
+        "facts": [
+          {
+            "label": "交付情况",
+            "value": "按时",
+            "evidenceId": "E-DEMO"
+          }
+        ],
+        "evidence": [
+          {
+            "id": "E-DEMO",
+            "sourceObjectId": "SRC-DEMO",
+            "sourceVersionId": "SV-DEMO",
+            "sourceFile": "fixture.csv",
+            "sourceSheet": "Sheet1",
+            "sourceRow": 2,
+            "fields": {
+              "status": "按时交付"
+            },
+            "classification": "FACT"
+          }
+        ],
+        "materialGaps": [],
+        "materials": []
       }
     },
     "getProjectState": {
       "id": "PRJ-DEMO",
-      "status": "ACTIVE",
-      "currentStage": null
+      "sourceTaskId": "TASK-DEMO",
+      "name": "隔离演示项目",
+      "status": "RUNNING",
+      "progress": 0,
+      "currentStage": null,
+      "outcome": {
+        "baseline": 80,
+        "target": 90,
+        "current": null,
+        "status": "NOT_MEASURED",
+        "conclusion": null,
+        "evidenceReference": null,
+        "note": null,
+        "submittedAt": null,
+        "acceptedAt": null,
+        "locator": null
+      }
     },
     "listProjectWorkItems": {
       "projectId": "PRJ-DEMO",
       "items": []
     },
     "listEvidence": {
-      "items": []
+      "projectId": "PRJ-DEMO",
+      "sourceTaskId": "TASK-DEMO",
+      "items": [
+        {
+          "id": "E-DEMO",
+          "sourceObjectId": "SRC-DEMO",
+          "sourceVersionId": "SV-DEMO",
+          "sourceFile": "fixture.csv",
+          "sourceSheet": "Sheet1",
+          "sourceRow": 2,
+          "fields": {
+            "status": "按时交付"
+          },
+          "classification": "FACT"
+        }
+      ]
     },
     "listTraceableMaterials": {
+      "projectId": "PRJ-DEMO",
+      "sourceTaskId": "TASK-DEMO",
       "items": [],
       "gaps": []
     },
     "getValidationWorkpaper": {
-      "id": "WP-DEMO"
+      "id": "WP-DEMO",
+      "projectId": "PRJ-DEMO",
+      "sourceTaskId": "TASK-DEMO",
+      "workItem": {
+        "id": "WI-DEMO",
+        "title": "核对交付记录",
+        "status": "READY",
+        "acceptanceCriteria": ["核对来源记录"]
+      },
+      "status": "DRAFTING",
+      "revision": 0,
+      "current": null,
+      "latestConfirmed": null,
+      "history": [],
+      "context": {
+        "facts": [
+          {
+            "evidenceId": "E-DEMO",
+            "label": "交付情况",
+            "value": "按时",
+            "classification": "FACT",
+            "locator": {
+              "sourceObjectId": "SRC-DEMO",
+              "sourceVersionId": "SV-DEMO",
+              "reference": "fixture.csv#2"
+            }
+          }
+        ],
+        "materials": [],
+        "materialGaps": []
+      }
     },
-    "getEvidenceProposals": [],
     "getMaterialPreview": {
       "material": {
         "id": "M-DEMO",
@@ -101,6 +246,13 @@
     },
     "confirmEvidence": {
       "version": 1
+    },
+    "getNextAction": {
+      "kind": "HUMAN_GATE_OR_REVIEW",
+      "projectId": "PRJ-DEMO",
+      "title": "核对交付记录",
+      "explanation": "等待责任人核对来源记录",
+      "classification": "PROPOSAL"
     }
   },
   "cases": [
@@ -127,14 +279,7 @@
       "tool": "workspace.resume",
       "arguments": {},
       "expect": {
-        "calledMethods": [
-          "listProjects",
-          "getCurrentProject",
-          "getCurrentWorkItem",
-          "getProjectContext",
-          "listEvidence",
-          "getEvidenceProposals"
-        ]
+        "calledMethods": ["getWorkspaceResume"]
       }
     },
     {
@@ -145,12 +290,7 @@
         "projectId": "PRJ-DEMO"
       },
       "expect": {
-        "calledMethods": [
-          "getProjectContext",
-          "getProjectState",
-          "getCurrentWorkItem",
-          "listProjectWorkItems"
-        ]
+        "calledMethods": ["getWorkContext"]
       }
     },
     {
@@ -161,12 +301,7 @@
         "projectId": "PRJ-DEMO"
       },
       "expect": {
-        "calledMethods": [
-          "listEvidence",
-          "listTraceableMaterials",
-          "getValidationWorkpaper",
-          "getEvidenceProposals"
-        ]
+        "calledMethods": ["getEvidenceBundle"]
       }
     },
     {
@@ -552,7 +687,7 @@
         "projectId": "PRJ-DEMO"
       },
       "failure": {
-        "method": "getProjectContext",
+        "method": "getWorkContext",
         "code": "INTEGRATION_TIMEOUT"
       }
     },
@@ -612,11 +747,13 @@
     {
       "id": "absent-workpaper-degrades",
       "kind": "absent",
-      "tool": "workspace.resume",
-      "arguments": {},
+      "tool": "evidence.bundle",
+      "arguments": {
+        "projectId": "PRJ-DEMO"
+      },
       "absent": {
-        "method": "getValidationWorkpaper",
-        "code": "NOT_FOUND"
+        "method": "getEvidenceBundle",
+        "response": { "workpaper": null }
       },
       "expect": {
         "notError": true,
@@ -627,10 +764,12 @@
     {
       "id": "absent-forbidden-constituent",
       "kind": "absent",
-      "tool": "workspace.resume",
-      "arguments": {},
+      "tool": "evidence.bundle",
+      "arguments": {
+        "projectId": "PRJ-DEMO"
+      },
       "absent": {
-        "method": "getValidationWorkpaper",
+        "method": "getEvidenceBundle",
         "code": "FORBIDDEN"
       },
       "expect": {

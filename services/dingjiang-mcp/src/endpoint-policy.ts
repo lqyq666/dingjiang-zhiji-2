@@ -13,7 +13,7 @@ const isIpv4Loopback = (host: string): boolean => {
   return octets[0] === 127;
 };
 
-const isLoopbackHostname = (hostname: string): boolean => {
+export const isLoopbackHostname = (hostname: string): boolean => {
   const host = hostname.replace(/^\[|\]$/g, "").toLowerCase();
   return LOOPBACK_HOSTNAMES.has(host) || isIpv4Loopback(host);
 };

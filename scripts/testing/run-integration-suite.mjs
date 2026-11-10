@@ -125,9 +125,8 @@ const runVitest = (
           ...switches,
           ...env,
           // The suite drives one credential from many files in a single minute,
-          // which is not the behaviour the ceiling is meant to police. The 429
-          // path is covered by rate-limit.service.test.ts; production keeps the
-          // limit on by default.
+          // which is not the behaviour the ceiling is meant to police. The
+          // production identity HTTP test opts back in for the 429 path.
           DINGJIANG_RATE_LIMIT_ENABLED: "0",
         },
         stdio: ["ignore", "pipe", "pipe"],
@@ -195,6 +194,7 @@ const main = async () => {
     const entries = [
       join(apiDir, "dist/main.js"),
       join(root, "services/dingjiang-mcp/dist/server.js"),
+      join(root, "services/dingjiang-mcp/dist/server-http.js"),
     ];
     const missing = entries.filter((entry) => !existsSync(entry));
     if (missing.length > 0) {
@@ -279,16 +279,11 @@ const main = async () => {
       },
     },
     {
-      name: "tier4 真实端到端（MCP 进程 → HTTP → API 进程 → PostgreSQL）",
+      name: "tier4 真实端到端（stdio / OAuth HTTP → MCP → API → PostgreSQL）",
       files: e2eFiles,
       env: {
         DATABASE_URL: databaseUrl,
         REAL_E2E: "1",
-        // The suite drives many writes through one credential from several
-        // processes. The 429 path is covered by rate-limit.service.test.ts;
-        // here the ceiling only needs to stay out of the way.
-        DINGJIANG_RATE_LIMIT_READ_PER_MIN: "100000",
-        DINGJIANG_RATE_LIMIT_WRITE_PER_MIN: "100000",
       },
     },
     {

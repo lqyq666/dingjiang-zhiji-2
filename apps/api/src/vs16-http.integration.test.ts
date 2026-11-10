@@ -1,10 +1,13 @@
 import { NestFactory } from "@nestjs/core";
 import type { INestApplication } from "@nestjs/common";
 import {
+  integrationFailureEnvelopeSchema,
+  integrationSuccessEnvelopeSchema,
+  integrationWorkspaceResumeSchema,
   projectSchema,
   validationWorkpaperViewSchema,
 } from "@dingjiang/contracts";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { AppModule } from "./app.module";
 import { Vs01Service } from "./vs01.service";
@@ -122,6 +125,89 @@ httpDescribe("VS16 HTTP root cause workpaper", () => {
     expect(JSON.stringify(body)).not.toMatch(
       /(?:storageKey|tenantId|byteSize|bytes|path)/i,
     );
+  });
+
+  it("includes an existing workpaper inside the authorized workspace read", async () => {
+    const token = "local-workspace-workpaper-test-token";
+    const workpaperOnly = "local-workpaper-only-test-token";
+    vi.stubEnv(
+      "DINGJIANG_MCP_TOKEN_BINDINGS_JSON",
+      JSON.stringify([
+        {
+          token,
+          tenantId: "tenant-demo",
+          subjectId: "workspace-workpaper-test",
+          role: "PMC",
+          scopes: [
+            "project:read",
+            "workitem:read",
+            "evidence:read",
+            "material:read",
+            "workpaper:read",
+          ],
+          projectIds: [projectId],
+        },
+        {
+          token: workpaperOnly,
+          tenantId: "tenant-demo",
+          subjectId: "workpaper-only-test",
+          role: "PMC",
+          scopes: ["workpaper:read"],
+          projectIds: [projectId],
+        },
+      ]),
+    );
+    try {
+      const headers = { authorization: `Bearer ${token}` };
+      const [resumed, individual] = await Promise.all([
+        fetch(`${api}/integration/workspace/resume`, { headers }),
+        fetch(`${api}/integration/projects/${projectId}/workpaper`, {
+          headers,
+        }),
+      ]);
+      expect(resumed.status).toBe(200);
+      expect(individual.status).toBe(200);
+      const snapshot = integrationSuccessEnvelopeSchema(
+        integrationWorkspaceResumeSchema,
+      ).parse(await resumed.json()).data;
+      const { data: workpaper } = integrationSuccessEnvelopeSchema(
+        validationWorkpaperViewSchema,
+      ).parse(await individual.json());
+      expect(snapshot.workpaper).toMatchObject({
+        id: workpaper.id,
+        projectId,
+        revision: workpaper.revision,
+        current: workpaper.current,
+      });
+      expect(snapshot.workpaper).not.toHaveProperty("history");
+
+      const direct = await json(
+        `${api}/vs16/projects/${projectId}/root-cause-workpaper`,
+        "PMC",
+      );
+      expect(direct.response.status).toBe(200);
+      expect(workpaper).toEqual(
+        validationWorkpaperViewSchema.parse(direct.body),
+      );
+      expect(workpaper.history).toHaveLength(1);
+      expect(
+        workpaper.context.materials.map((item) => item.materialId),
+      ).toEqual([materialId]);
+      expect(workpaper.context.materialGaps).toEqual([]);
+
+      const denied = await fetch(
+        `${api}/integration/projects/${projectId}/workpaper`,
+        {
+          headers: { authorization: `Bearer ${workpaperOnly}` },
+        },
+      );
+      expect(denied.status).toBe(403);
+      expect(
+        integrationFailureEnvelopeSchema.parse(await denied.json()).error.code,
+      ).toBe("FORBIDDEN");
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("returns structured stale/idempotency behavior and keeps assistant and candidates read-only", async () => {

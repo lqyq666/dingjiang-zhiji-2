@@ -10,6 +10,7 @@
   "scripts": {
     "build": "turbo run build",
     "dev": "turbo run dev --parallel",
+    "demo:mcp": "pnpm exec turbo run build --filter=@dingjiang/api --filter=@dingjiang/mcp && node scripts/demo/mcp-workspace.mjs",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "feishu:schema:apply": "pnpm --filter @dingjiang/feishu-schema apply",

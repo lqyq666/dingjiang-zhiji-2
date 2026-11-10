@@ -1,32 +1,32 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { createSessionProfile, latestProtocolVersion } from "./session-profile";
+import { createSessionProfile } from "./session-profile";
 
-const originalSurface = process.env.DINGJIANG_MCP_TOOL_SURFACE;
-
-afterEach(() => {
-  if (originalSurface === undefined)
-    delete process.env.DINGJIANG_MCP_TOOL_SURFACE;
-  else process.env.DINGJIANG_MCP_TOOL_SURFACE = originalSurface;
-});
+afterEach(() => vi.unstubAllEnvs());
 
 describe("session profile", () => {
-  it("defaults to the business surface and the only revision we speak", () => {
-    delete process.env.DINGJIANG_MCP_TOOL_SURFACE;
+  it("defaults to the regular business surface", () => {
+    vi.stubEnv("DINGJIANG_MCP_TOOL_SURFACE", undefined);
+    vi.stubEnv("DINGJIANG_MCP_READ_ONLY", undefined);
     expect(createSessionProfile()).toEqual({
-      revision: latestProtocolVersion,
       toolSurface: "business",
+      readOnly: false,
     });
   });
 
   it("honours the deployment-level surface choice", () => {
-    process.env.DINGJIANG_MCP_TOOL_SURFACE = "compatibility";
+    vi.stubEnv("DINGJIANG_MCP_TOOL_SURFACE", "compatibility");
     expect(createSessionProfile().toolSurface).toBe("compatibility");
   });
 
-  it("carries metadata only, never identity or authorization", () => {
+  it("fails startup if an explicit read-only value is invalid", () => {
+    vi.stubEnv("DINGJIANG_MCP_READ_ONLY", "true");
+    expect(createSessionProfile).toThrow("DINGJIANG_MCP_READ_ONLY");
+  });
+
+  it("carries startup policy without caller credentials or identity", () => {
     expect(Object.keys(createSessionProfile()).sort()).toEqual([
-      "revision",
+      "readOnly",
       "toolSurface",
     ]);
   });

@@ -64,13 +64,17 @@ export class RootCauseWorkpaperService implements OnModuleDestroy {
     await this.pool.end();
   }
 
-  async view(projectId: string): Promise<ValidationWorkpaperView> {
-    const client = this.commandTransaction ?? (await this.pool.connect());
+  async view(
+    projectId: string,
+    snapshotClient?: PoolClient,
+  ): Promise<ValidationWorkpaperView> {
+    const boundClient = snapshotClient ?? this.commandTransaction;
+    const client = boundClient ?? (await this.pool.connect());
     try {
       const scope = await this.scope(client, projectId, false);
-      return this.readView(client, scope);
+      return await this.readView(client, scope);
     } finally {
-      if (!this.commandTransaction) client.release();
+      if (!boundClient) client.release();
     }
   }
 
@@ -424,7 +428,7 @@ export class RootCauseWorkpaperService implements OnModuleDestroy {
   private async scope(client: PoolClient, projectId: string, ensure: boolean) {
     const item = isProduction()
       ? await client.query(
-          "SELECT p.id AS project_id,p.source_task_id,s.id AS work_item_id,s.title,s.status AS work_item_status,s.acceptance,phase.gate_status FROM vs01_projects p JOIN vs01_project_nodes n ON n.project_id=p.id AND n.tenant_id=p.tenant_id JOIN vs01_project_subtasks s ON s.node_id=n.id AND s.tenant_id=p.tenant_id JOIN vs01_project_phases phase ON phase.project_id=p.id AND phase.tenant_id=p.tenant_id AND phase.code=s.phase_code WHERE p.id=$1 AND p.tenant_id=$2 AND s.phase_code='ROOT_CAUSE_VALIDATION' AND s.sort_order=3 AND s.owner='PMC' FOR UPDATE OF p,s",
+          `SELECT p.id AS project_id,p.source_task_id,s.id AS work_item_id,s.title,s.status AS work_item_status,s.acceptance,phase.gate_status FROM vs01_projects p JOIN vs01_project_nodes n ON n.project_id=p.id AND n.tenant_id=p.tenant_id JOIN vs01_project_subtasks s ON s.node_id=n.id AND s.tenant_id=p.tenant_id JOIN vs01_project_phases phase ON phase.project_id=p.id AND phase.tenant_id=p.tenant_id AND phase.code=s.phase_code WHERE p.id=$1 AND p.tenant_id=$2 AND s.phase_code='ROOT_CAUSE_VALIDATION' AND s.sort_order=3 AND s.owner='PMC'${ensure ? " FOR UPDATE OF p,s" : ""}`,
           [projectId, tenantId],
         )
       : ensure
@@ -433,7 +437,7 @@ export class RootCauseWorkpaperService implements OnModuleDestroy {
             [projectId, tenantId, liveSourceTaskId],
           )
         : await client.query(
-            "SELECT p.id AS project_id, p.source_task_id, s.id AS work_item_id, s.title, s.status AS work_item_status, s.acceptance FROM vs01_projects p JOIN vs01_project_nodes n ON n.project_id = p.id AND n.tenant_id = p.tenant_id JOIN vs01_project_subtasks s ON s.node_id = n.id AND s.tenant_id = p.tenant_id LEFT JOIN vs16_root_cause_workpapers w ON w.project_id = p.id AND w.tenant_id = p.tenant_id WHERE p.id = $1 AND p.tenant_id = $2 AND s.phase_code = 'ROOT_CAUSE_VALIDATION' AND s.owner = 'PMC' AND ((w.id IS NOT NULL AND s.id = w.work_item_id) OR (w.id IS NULL AND p.source_task_id = $3 AND s.origin = 'LIVE')) FOR UPDATE OF p, s",
+            "SELECT p.id AS project_id, p.source_task_id, s.id AS work_item_id, s.title, s.status AS work_item_status, s.acceptance FROM vs01_projects p JOIN vs01_project_nodes n ON n.project_id = p.id AND n.tenant_id = p.tenant_id JOIN vs01_project_subtasks s ON s.node_id = n.id AND s.tenant_id = p.tenant_id LEFT JOIN vs16_root_cause_workpapers w ON w.project_id = p.id AND w.tenant_id = p.tenant_id WHERE p.id = $1 AND p.tenant_id = $2 AND s.phase_code = 'ROOT_CAUSE_VALIDATION' AND s.owner = 'PMC' AND ((w.id IS NOT NULL AND s.id = w.work_item_id) OR (w.id IS NULL AND p.source_task_id = $3 AND s.origin = 'LIVE'))",
             [projectId, tenantId, liveSourceTaskId],
           );
     if (item.rowCount !== 1)
@@ -447,7 +451,7 @@ export class RootCauseWorkpaperService implements OnModuleDestroy {
         "请先完成项目界定和事实核对，根因阶段尚未解锁",
       );
     let workpaper = await client.query<WorkpaperRow>(
-      "SELECT * FROM vs16_root_cause_workpapers WHERE project_id = $1 AND tenant_id = $2 FOR UPDATE",
+      `SELECT * FROM vs16_root_cause_workpapers WHERE project_id = $1 AND tenant_id = $2${ensure ? " FOR UPDATE" : ""}`,
       [projectId, tenantId],
     );
     if (!workpaper.rowCount && ensure) {
@@ -485,7 +489,7 @@ export class RootCauseWorkpaperService implements OnModuleDestroy {
     // A pg client is a single ordered connection: keep these reads serial.
     const facts = await this.facts(client, scope.sourceTaskId);
     const materials = await this.materials(client, scope.sourceTaskId);
-    const gaps = await this.materialGaps(client, scope.sourceTaskId);
+    const gaps = this.materialGaps(materials);
     const workpaper = scope.workpaper;
     const versions = workpaper
       ? await client.query(
@@ -597,10 +601,10 @@ export class RootCauseWorkpaperService implements OnModuleDestroy {
     return result.rows;
   }
 
-  private async materialGaps(client: PoolClient, sourceTaskId: string) {
-    const active = await this.materials(client, sourceTaskId);
-    const activeRequirements = new Set(active.map((row) => row.requirement_id));
-    return activeRequirements.has("REQ-CAPACITY-LOAD")
+  private materialGaps(activeMaterials: readonly MaterialRow[]) {
+    return activeMaterials.some(
+      (row) => row.requirement_id === "REQ-CAPACITY-LOAD",
+    )
       ? []
       : [
           {

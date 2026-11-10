@@ -236,6 +236,31 @@ describe("dingjiang-mcp transport classification", () => {
     expect(JSON.stringify(error)).not.toContain("local-secret");
   });
 
+  it("passes cancellation to the HTTP read", async () => {
+    useLoopback();
+    const controller = new AbortController();
+    const fetchMock = vi.fn(
+      (_url: URL, init: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          const signal = init.signal!;
+          signal.addEventListener("abort", () => reject(signal.reason), {
+            once: true,
+          });
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const read = new DingjiangIntegrationClient(
+      controller.signal,
+    ).getProjectState("PRJ-1");
+    const result = expect(read).rejects.toMatchObject({
+      code: "INTEGRATION_TIMEOUT",
+    });
+    controller.abort();
+    await result;
+    expect(fetchMock.mock.calls[0]?.[1].signal?.aborted).toBe(true);
+  });
+
   it("classifies an unreachable API as a network error", async () => {
     useLoopback();
     vi.stubGlobal(

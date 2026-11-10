@@ -1,11 +1,25 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { once } from "node:events";
 import { existsSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
 import { createInterface } from "node:readline";
 import { resolve } from "node:path";
 
+import {
+  integrationEvidenceBundleSchema,
+  integrationWorkContextSchema,
+  integrationWorkspaceResumeSchema,
+  workExecutionContextSchema,
+} from "@dingjiang/contracts";
 import type { Pool } from "pg";
 import { createTestPool } from "../testing/test-pool";
+import {
+  oauthRead,
+  oauthWrite,
+  obtainOAuthToken,
+  startOAuthTestIssuer,
+} from "../testing/oauth-test-issuer";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { databaseUrl, migrate, resetAndSeed } from "../vs01-db";
@@ -23,13 +37,23 @@ import { Vs01Service } from "../vs01.service";
  * Enable with REAL_E2E=1. The run owns a throwaway database and drops it.
  */
 const run = process.env.REAL_E2E === "1";
+const demoDirectory = process.env.REAL_E2E_DEMO_DIRECTORY;
 
 const repoRoot = resolve(process.cwd(), "../..");
 const apiEntry = resolve(process.cwd(), "dist/main.js");
 const mcpEntry = resolve(repoRoot, "services/dingjiang-mcp/dist/server.js");
+const mcpHttpEntry = resolve(
+  repoRoot,
+  "services/dingjiang-mcp/dist/server-http.js",
+);
 
 const pmcToken = `real-e2e-pmc-${randomUUID()}`;
 const readOnlyToken = `real-e2e-readonly-${randomUUID()}`;
+const modernMeta = {
+  "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+  "io.modelcontextprotocol/clientCapabilities": {},
+  "io.modelcontextprotocol/clientInfo": { name: "real-e2e", version: "1" },
+};
 
 type JsonRpcResponse = {
   jsonrpc: "2.0";
@@ -46,13 +70,18 @@ class McpProcess {
   >();
   private readonly stderr: string[] = [];
 
-  constructor(token: string, baseUrl: string) {
+  constructor(
+    token: string,
+    baseUrl: string,
+    private readonly options: { readOnly?: boolean; modern?: boolean } = {},
+  ) {
     this.child = spawn(process.execPath, [mcpEntry], {
       env: {
         ...process.env,
         DINGJIANG_API_BASE_URL: baseUrl,
         DINGJIANG_MCP_API_TOKEN: token,
         DINGJIANG_MCP_TOOL_SURFACE: "",
+        DINGJIANG_MCP_READ_ONLY: this.options.readOnly ? "1" : "0",
       },
       stdio: ["pipe", "pipe", "pipe"],
     });
@@ -76,7 +105,7 @@ class McpProcess {
 
   async request(
     method: string,
-    params?: unknown,
+    params?: Record<string, unknown>,
     timeoutMs = 30_000,
   ): Promise<JsonRpcResponse> {
     const id = randomUUID();
@@ -94,8 +123,11 @@ class McpProcess {
         reject(new Error(`MCP exited with ${code} during ${method}`));
       });
     });
+    const wireParams = this.options.modern
+      ? { ...params, _meta: modernMeta }
+      : params;
     this.child.stdin!.write(
-      `${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`,
+      `${JSON.stringify({ jsonrpc: "2.0", id, method, params: wireParams })}\n`,
     );
     return settled;
   }
@@ -167,11 +199,22 @@ describe.skipIf(!run)(
     let pool: Pool;
     let api: ChildProcess;
     let mcp: McpProcess;
+    let modernMcp: McpProcess;
     let readOnlyMcp: McpProcess;
     let projectId: string;
     let version: number;
     let stateFingerprint: string;
     let workItemId: string;
+    const trace: Array<{
+      title: string;
+      result: Record<string, string | number | boolean | null>;
+    }> = [];
+    const record = (
+      title: string,
+      result: (typeof trace)[number]["result"],
+    ) => {
+      if (demoDirectory) trace.push({ title, result });
+    };
     const original = {
       DATABASE_URL: process.env.DATABASE_URL,
       PORT: process.env.PORT,
@@ -210,6 +253,7 @@ describe.skipIf(!run)(
       }
 
       expect(existsSync(mcpEntry)).toBe(true);
+      expect(existsSync(mcpHttpEntry)).toBe(true);
       expect(existsSync(apiEntry)).toBe(true);
 
       process.env.DINGJIANG_MCP_TOKEN_BINDINGS_JSON = JSON.stringify([
@@ -240,12 +284,13 @@ describe.skipIf(!run)(
       ]);
 
       api = spawn(process.execPath, [apiEntry], {
+        cwd: demoDirectory,
         env: {
           ...process.env,
           PORT: String(port),
           API_HOST: "127.0.0.1",
           VS15_MATERIAL_VAULT_ROOT: resolve(
-            process.cwd(),
+            demoDirectory ?? process.cwd(),
             ".data/real-e2e-vault",
           ),
         },
@@ -261,11 +306,13 @@ describe.skipIf(!run)(
       await waitForHealth(`${baseUrl}/health`);
 
       mcp = new McpProcess(pmcToken, baseUrl);
+      modernMcp = new McpProcess(pmcToken, baseUrl, { modern: true });
       readOnlyMcp = new McpProcess(readOnlyToken, baseUrl);
     }, 180_000);
 
     afterAll(async () => {
       await mcp?.stop();
+      await modernMcp?.stop();
       await readOnlyMcp?.stop();
       if (api && api.exitCode === null) {
         const exited = new Promise<void>((resolvePromise) =>
@@ -283,9 +330,15 @@ describe.skipIf(!run)(
         if (value === undefined) delete process.env[key];
         else process.env[key] = value;
       }
+      if (demoDirectory)
+        await writeFile(
+          resolve(demoDirectory, "trace.json"),
+          JSON.stringify(trace, null, 2),
+          { flag: "wx" },
+        );
     }, 120_000);
 
-    it("negotiates over stdio and publishes the governed surface", async () => {
+    it("publishes the same governed surface over both stdio protocols", async () => {
       const initialize = await mcp.request("initialize", {
         protocolVersion: "2025-06-18",
         capabilities: {},
@@ -311,6 +364,25 @@ describe.skipIf(!run)(
       expect(execute.annotations.readOnlyHint).toBe(false);
       expect(execute.annotations.destructiveHint).toBe(true);
       expect(execute.outputSchema?.type).toBe("object");
+
+      const discovered = await modernMcp.request("server/discover");
+      expect(discovered.result).toMatchObject({
+        resultType: "complete",
+        supportedVersions: ["2026-07-28"],
+        capabilities: { tools: {} },
+        instructions: expect.stringContaining("PROPOSAL"),
+        _meta: {
+          "io.modelcontextprotocol/serverInfo": { name: "dingjiang-mcp" },
+        },
+      });
+      const modernList = await modernMcp.request("tools/list");
+      expect(modernList.result?.tools).toEqual(tools);
+      record("连接自定义 MCP Server", {
+        协议版本: result.protocolVersion,
+        新版发现: "2026-07-28",
+        工具数量: tools.length,
+        "work.execute 只读": execute.annotations.readOnlyHint === true,
+      });
     });
 
     it("authenticates the bearer token against the real HTTP API", async () => {
@@ -326,21 +398,35 @@ describe.skipIf(!run)(
       };
       expect(body.ok).toBe(true);
       expect(body.data.currentProjectId).toBe(projectId);
+      record("用真实 HTTP 验证身份", {
+        匿名请求: anonymous.status,
+        授权请求: authorized.status,
+        当前项目: body.data.currentProjectId,
+      });
     });
 
     it("reads the workspace and derives a PROPOSAL next action", async () => {
       const resumed = await mcp.call("workspace.resume");
       expect(resumed.isError).toBe(false);
-      const nextAction = resumed.data?.nextAction as {
-        classification: string;
-        projectId: string;
-      };
+      const snapshot = integrationWorkspaceResumeSchema.parse(resumed.data);
+      const { nextAction } = snapshot;
       expect(nextAction.projectId).toBe(projectId);
       // The derived classification is the product invariant: never FACT.
       expect(nextAction.classification).toBe("PROPOSAL");
       // A freshly created project has no workpaper. The composite must report the
       // absence rather than collapsing; this is the regression the real run found.
-      expect(resumed.data?.workpaper).toBeNull();
+      expect(snapshot.workpaper).toBeNull();
+      const [evidence] = snapshot.evidence.items;
+      expect(evidence?.classification).toBe("FACT");
+      record("恢复延期项目并读取证据", {
+        项目: snapshot.state.name,
+        工单: snapshot.context.sourceTask.id,
+        阶段: snapshot.state.currentStage?.name ?? null,
+        下一动作: nextAction.title,
+        动作分类: nextAction.classification,
+        来源版本: evidence!.sourceVersionId,
+        来源位置: `${evidence!.sourceFile} · ${evidence!.sourceSheet} · row ${evidence!.sourceRow}`,
+      });
 
       const operations = await mcp.call("work.operations", { projectId });
       expect(operations.isError).toBe(false);
@@ -387,9 +473,14 @@ describe.skipIf(!run)(
       // A permission denial is not something the model may retry its way out of.
       expect(denied.failure?.retryable).toBe(false);
       expect(denied.failure?.requiresHuman).toBe(true);
+      record("只读身份提交进度", {
+        结果: String(denied.failure?.code),
+        可重试: denied.failure?.retryable === true,
+        需人工介入: denied.failure?.requiresHuman === true,
+      });
     });
 
-    it("runs a governed write, replays it safely and rejects a stale version", async () => {
+    it("blocks a write in the read-only process and preserves governed replay", async () => {
       const requestId = randomUUID();
       const command = {
         projectId,
@@ -403,12 +494,37 @@ describe.skipIf(!run)(
           operation: {
             action: "progress.record",
             workItemId,
-            note: "真实端到端测试写入的服务端事实",
+            note: "已核对订单预计交期，准备与采购复核到料时间。",
           },
         },
       };
 
-      const written = await mcp.call("work.execute", command);
+      const readOnlyProcess = new McpProcess(pmcToken, baseUrl, {
+        modern: true,
+        readOnly: true,
+      });
+      try {
+        const discovered = await readOnlyProcess.request("server/discover");
+        expect(discovered.result?.instructions).toContain("只读");
+        const listed = await readOnlyProcess.request("tools/list");
+        expect(listed.result?.tools).toHaveLength(7);
+        expect(await readOnlyProcess.call("workspace.resume")).toMatchObject({
+          isError: false,
+          data: { projectId },
+        });
+        expect(
+          await readOnlyProcess.request("tools/call", {
+            name: "work.execute",
+            arguments: command,
+          }),
+        ).toMatchObject({
+          error: { code: -32602, data: { code: "UNKNOWN_TOOL" } },
+        });
+      } finally {
+        await readOnlyProcess.stop();
+      }
+
+      const written = await modernMcp.call("work.execute", command);
       expect(written.isError).toBe(false);
       const receipt = written.data as { version: number; replayed: boolean };
       expect(receipt.replayed).toBe(false);
@@ -423,7 +539,7 @@ describe.skipIf(!run)(
       );
 
       // A new requestId carrying the pre-write version must be refused.
-      const stale = await mcp.call("work.execute", {
+      const stale = await modernMcp.call("work.execute", {
         ...command,
         requestId: randomUUID(),
         correlationId: randomUUID(),
@@ -433,7 +549,7 @@ describe.skipIf(!run)(
 
       const persisted = await pool.query(
         "SELECT count(*)::int AS count FROM vs01_project_subtasks WHERE progress_note = $1",
-        ["真实端到端测试写入的服务端事实"],
+        [command.payload.operation.note],
       );
       expect(persisted.rows[0].count).toBe(1);
 
@@ -446,6 +562,297 @@ describe.skipIf(!run)(
       );
       expect(receipts.rows[0].count).toBe(1);
       expect(receipts.rows[0].version).toBe(version + 1);
+
+      const reread = await mcp.call("workspace.resume");
+      expect(reread.isError).toBe(false);
+      const snapshot = integrationWorkspaceResumeSchema.parse(reread.data);
+      const saved = snapshot.workItems.items.find(
+        (item) => item.id === workItemId,
+      );
+      expect(saved?.progressUpdate?.note).toBe(command.payload.operation.note);
+      record("授权 PMC 提交进度并回读", {
+        事项: workItemId,
+        提交版本: receipt.version,
+        同一请求返回原回执: replay.data?.replayed === true,
+        旧版本提交: String(stale.failure?.code),
+        数据库进度记录: persisted.rows[0].count,
+        数据库回执: receipts.rows[0].count,
+        "MCP 回读": saved!.progressUpdate!.note,
+      });
     });
+
+    it("validates OAuth grants, blocks read-only writes and reads the authorized receipt back", async () => {
+      const httpPort = 39_000 + Math.floor(Math.random() * 3_000);
+      const remoteUrl = `http://127.0.0.1:${httpPort}/mcp`;
+      const otherResource = new URL("/other-resource", remoteUrl).href;
+      const metadataUrl = new URL(
+        "/.well-known/oauth-protected-resource/mcp",
+        remoteUrl,
+      ).href;
+      const issuer = await startOAuthTestIssuer([remoteUrl, otherResource]);
+      const remote = spawn(process.execPath, [mcpHttpEntry], {
+        env: {
+          ...process.env,
+          DINGJIANG_MCP_HTTP_URL: remoteUrl,
+          DINGJIANG_MCP_HTTP_PORT: String(httpPort),
+          DINGJIANG_MCP_OAUTH_ISSUER: issuer.issuer,
+          DINGJIANG_MCP_OAUTH_JWKS_URL: issuer.jwksUrl,
+          DINGJIANG_MCP_OAUTH_BINDINGS_JSON: JSON.stringify([
+            { subject: "e2e-pmc", integrationToken: pmcToken },
+            { subject: "e2e-api-readonly", integrationToken: readOnlyToken },
+          ]),
+          DINGJIANG_API_BASE_URL: baseUrl,
+          DINGJIANG_API_ALLOWED_HOSTS: "127.0.0.1",
+          DINGJIANG_MCP_API_TOKEN: "",
+          DINGJIANG_MCP_READ_ONLY: "0",
+          DINGJIANG_MCP_TOOL_SURFACE: "",
+        },
+        stdio: "ignore",
+      });
+      const request = (
+        token: string | undefined,
+        method: string,
+        params: Record<string, unknown> = {},
+        headers: Record<string, string> = {},
+      ) =>
+        fetch(remoteUrl, {
+          method: "POST",
+          headers: {
+            accept: "application/json, text/event-stream",
+            "content-type": "application/json",
+            "mcp-protocol-version":
+              modernMeta["io.modelcontextprotocol/protocolVersion"],
+            "mcp-method": method,
+            ...(method === "tools/call"
+              ? { "mcp-name": String(params.name) }
+              : {}),
+            ...(token ? { authorization: `Bearer ${token}` } : {}),
+            ...headers,
+          },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: randomUUID(),
+            method,
+            params: { ...params, _meta: modernMeta },
+          }),
+        });
+      const call = async (
+        token: string,
+        name: string,
+        args: Record<string, unknown> = {},
+      ): Promise<JsonRpcResponse> => {
+        const response = await request(token, "tools/call", {
+          name,
+          arguments: args,
+        });
+        return (await response.json()) as JsonRpcResponse;
+      };
+
+      try {
+        await waitForHealth(metadataUrl);
+        const unauthenticated = await request(undefined, "server/discover");
+        expect(unauthenticated.status).toBe(401);
+        expect(unauthenticated.headers.get("www-authenticate")).toContain(
+          `resource_metadata="${metadataUrl}"`,
+        );
+
+        const metadata = (await (await fetch(metadataUrl)).json()) as {
+          resource: string;
+          authorization_servers: string[];
+          scopes_supported: string[];
+        };
+        expect(metadata).toMatchObject({
+          resource: remoteUrl,
+          authorization_servers: [issuer.issuer],
+          scopes_supported: [oauthRead, oauthWrite],
+        });
+        const authorizationServer = metadata.authorization_servers[0]!;
+        const [read, write, wrongAudience, noReadScope, unbound, apiReadOnly] =
+          await Promise.all([
+            obtainOAuthToken(authorizationServer, metadata.resource, [
+              oauthRead,
+            ]),
+            obtainOAuthToken(authorizationServer, metadata.resource, [
+              oauthRead,
+              oauthWrite,
+            ]),
+            obtainOAuthToken(authorizationServer, otherResource, [oauthRead]),
+            obtainOAuthToken(authorizationServer, metadata.resource, [
+              oauthWrite,
+            ]),
+            obtainOAuthToken(
+              authorizationServer,
+              metadata.resource,
+              [oauthRead],
+              "e2e-unbound",
+            ),
+            obtainOAuthToken(
+              authorizationServer,
+              metadata.resource,
+              [oauthRead, oauthWrite],
+              "e2e-api-readonly",
+            ),
+          ]);
+        // Exercise a cold JWKS cache. The same token should work once keys return.
+        issuer.setJwksAvailable(false);
+        const unavailable = await request(read, "tools/list");
+        expect(unavailable.status).toBe(500);
+        expect(unavailable.headers.get("www-authenticate")).toBeNull();
+        expect(await unavailable.json()).toMatchObject({
+          error: "server_error",
+        });
+        issuer.setJwksAvailable(true);
+        expect((await request(read, "tools/list")).status).toBe(200);
+
+        const invalid = await request(wrongAudience, "tools/list");
+        expect(invalid.status).toBe(401);
+        expect(invalid.headers.get("www-authenticate")).toContain(
+          "invalid_token",
+        );
+        expect((await request("malformed", "tools/list")).status).toBe(401);
+        const scopeDenied = await request(noReadScope, "tools/list");
+        expect(scopeDenied.status).toBe(403);
+        expect(scopeDenied.headers.get("www-authenticate")).toContain(
+          "insufficient_scope",
+        );
+        expect((await request(unbound, "tools/list")).status).toBe(403);
+        expect(
+          (
+            await request(
+              read,
+              "tools/list",
+              {},
+              { origin: "https://other.example.invalid" },
+            )
+          ).status,
+        ).toBe(403);
+        expect(
+          (
+            await fetch(`${baseUrl}/integration/events`, {
+              headers: { authorization: `Bearer ${write}` },
+            })
+          ).status,
+        ).toBe(401);
+
+        const discovered = await request(read, "server/discover");
+        expect(discovered.status).toBe(200);
+        expect(discovered.headers.get("mcp-session-id")).toBeNull();
+        expect(await discovered.json()).toMatchObject({
+          result: {
+            supportedVersions: ["2026-07-28"],
+            instructions: expect.stringContaining("只读"),
+          },
+        });
+        const listRead = (await (
+          await request(read, "tools/list")
+        ).json()) as JsonRpcResponse;
+        expect(listRead.result?.tools).toHaveLength(7);
+        expect(listRead.result?.tools).not.toContainEqual(
+          expect.objectContaining({ name: "work.execute" }),
+        );
+        const listWrite = (await (
+          await request(write, "tools/list")
+        ).json()) as JsonRpcResponse;
+        expect(listWrite.result?.tools).toHaveLength(13);
+
+        const state = workExecutionContextSchema.parse(
+          (await call(read, "work.operations", { projectId })).result
+            ?.structuredContent,
+        );
+        const workItem = state.project?.phases
+          .flatMap((phase) => phase.tasks)
+          .find((item) => item.owner === "PMC" && item.status !== "DONE");
+        if (!workItem) throw new Error("Missing remote MCP fixture work item");
+
+        const requestId = randomUUID();
+        const note = "通过 OAuth 授权的远程 MCP 已复核采购到料时间。";
+        const command = {
+          projectId,
+          requestId,
+          correlationId: randomUUID(),
+          expectedVersion: state.version,
+          reason: "远程 MCP 端到端测试",
+          payload: {
+            stateFingerprint: state.stateFingerprint,
+            confirmation: "确认记录本次远程测试进展",
+            operation: {
+              action: "progress.record",
+              workItemId: workItem.id,
+              note,
+            },
+          },
+        };
+
+        expect(await call(read, "work.execute", command)).toMatchObject({
+          error: { code: -32602, data: { code: "UNKNOWN_TOOL" } },
+        });
+        expect(await call(apiReadOnly, "work.execute", command)).toMatchObject({
+          result: {
+            isError: true,
+            structuredContent: { code: "PERMISSION_DENIED" },
+          },
+        });
+        const receiptCount = async () =>
+          (
+            await pool.query<{ count: number }>(
+              "SELECT count(*)::int AS count FROM governed_command_receipts WHERE request_id = $1",
+              [requestId],
+            )
+          ).rows[0]?.count;
+        expect(await receiptCount()).toBe(0);
+
+        const receipts = await Promise.all([
+          call(write, "work.execute", command),
+          call(write, "work.execute", command),
+        ]);
+        for (const response of receipts)
+          expect(response.result?.structuredContent).toMatchObject({
+            version: state.version + 1,
+          });
+        const replayFlags = receipts.map(
+          (response) =>
+            (response.result?.structuredContent as { replayed?: boolean })
+              .replayed,
+        );
+        expect(replayFlags.sort()).toEqual([false, true]);
+        expect(await receiptCount()).toBe(1);
+        const snapshot = integrationWorkspaceResumeSchema.parse(
+          (await call(read, "workspace.resume")).result?.structuredContent,
+        );
+        expect(
+          snapshot.workItems.items.find((item) => item.id === workItem.id)
+            ?.progressUpdate?.note,
+        ).toBe(note);
+        expect(snapshot.evidence.items[0]?.sourceFile).toBe("orders.csv");
+        const workContext = integrationWorkContextSchema.parse(
+          (await call(read, "work.context", { projectId })).result
+            ?.structuredContent,
+        );
+        expect(
+          workContext.workItems.items.find((item) => item.id === workItem.id)
+            ?.progressUpdate?.note,
+        ).toBe(note);
+        const evidenceBundle = integrationEvidenceBundleSchema.parse(
+          (await call(read, "evidence.bundle", { projectId })).result
+            ?.structuredContent,
+        );
+        expect(evidenceBundle.evidence).toEqual(snapshot.evidence);
+        expect(evidenceBundle.materials).toEqual(snapshot.materials);
+        expect(evidenceBundle.proposals).toEqual(snapshot.proposals);
+        record("远程 MCP 经 OAuth 拦截与写入回读", {
+          只读工具数: 7,
+          提交版本: state.version + 1,
+          数据库回执: 1,
+          "MCP 回读": note,
+        });
+      } finally {
+        if (remote.exitCode === null && remote.signalCode === null) {
+          const exited = once(remote, "exit");
+          remote.kill();
+          await exited;
+        }
+        await issuer.close();
+      }
+    }, 75_000);
   },
 );

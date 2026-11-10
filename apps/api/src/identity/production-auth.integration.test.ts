@@ -1,5 +1,10 @@
 import "reflect-metadata";
 import { randomBytes, randomUUID } from "node:crypto";
+import {
+  integrationFailureEnvelopeSchema,
+  integrationSuccessEnvelopeSchema,
+  integrationWorkspaceResumeSchema,
+} from "@dingjiang/contracts";
 import type { Pool } from "pg";
 import { createTestPool } from "../testing/test-pool";
 import { NestFactory } from "@nestjs/core";
@@ -379,6 +384,64 @@ const run = process.env.PRODUCTION_INTEGRATION === "1";
       expect(await response.text()).not.toContain(password);
       expect(sessionCookieName).toBe("dingjiang_session");
     });
+
+    it("limits Integration HTTP reads per MCP credential and resets the next minute", async () => {
+      const username = "rate-limit.owner";
+      await identity.setAccount({
+        username,
+        displayName: "限流测试负责人",
+        role: "OWNER",
+        password,
+      });
+      const projectIds = ["PRJ-RATE-LIMIT"];
+      const token = await identity.issueMcpToken(username, projectIds);
+      const correlationId = randomUUID();
+      const read = (credential: string) =>
+        fetch(`${base}/integration/projects`, {
+          headers: {
+            authorization: `Bearer ${credential}`,
+            "x-correlation-id": correlationId,
+          },
+        });
+      const now = Date.UTC(2026, 0, 1, 0, 0, 15);
+      const clock = vi.spyOn(Date, "now").mockReturnValue(now);
+      const previousRateLimit = {
+        DINGJIANG_RATE_LIMIT_ENABLED: process.env.DINGJIANG_RATE_LIMIT_ENABLED,
+        DINGJIANG_RATE_LIMIT_READ_PER_MIN:
+          process.env.DINGJIANG_RATE_LIMIT_READ_PER_MIN,
+      };
+      delete process.env.DINGJIANG_RATE_LIMIT_ENABLED;
+      process.env.DINGJIANG_RATE_LIMIT_READ_PER_MIN = "1";
+      try {
+        expect((await read(token)).status).toBe(200);
+        const limited = await read(token);
+        expect(limited.status).toBe(429);
+        expect(limited.headers.get("retry-after")).toBe("45");
+        expect(
+          integrationFailureEnvelopeSchema.parse(await limited.json()),
+        ).toMatchObject({
+          ok: false,
+          correlationId,
+          error: {
+            code: "RATE_LIMITED",
+            retryable: true,
+            requiresHuman: false,
+          },
+        });
+
+        const rotated = await identity.issueMcpToken(username, projectIds);
+        expect((await read(rotated)).status).toBe(200);
+        clock.mockReturnValue(now + 45_000);
+        expect((await read(rotated)).status).toBe(200);
+      } finally {
+        clock.mockRestore();
+        for (const [key, value] of Object.entries(previousRateLimit)) {
+          if (value === undefined) delete process.env[key];
+          else process.env[key] = value;
+        }
+      }
+    });
+
     it("RC2 actual PostgreSQL: immutable intake, human authorization, concurrent replay, generic project initialization, and pinned source facts", async () => {
       // Runs ONLY through the guarded disposable-database suite, never on a real
       // enterprise DB. No fake SQL/identity/contract substitutes are used here.
@@ -589,6 +652,20 @@ const run = process.env.PRODUCTION_INTEGRATION === "1";
           "UPDATE production_project_snapshots SET metric_before=100",
         ),
       ).rejects.toThrow();
+      const resume = await fetch(`${base}/integration/workspace/resume`, {
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(resume.status).toBe(200);
+      const { data } = integrationSuccessEnvelopeSchema(
+        integrationWorkspaceResumeSchema,
+      ).parse(await resume.json());
+      expect(data.projectId).toBe(projectId);
+      expect(data.workpaper).toMatchObject({ projectId, revision: 0 });
+      expect(
+        data.evidence.items.find((item) => item.id.startsWith("E-ORDER-"))
+          ?.fields.forecastDate,
+      ).toBe("2026-09-03");
+
       await identity.revokeMcpTokens("pmc.source-test");
       await expect(
         work.execute(principal, projectId, request),

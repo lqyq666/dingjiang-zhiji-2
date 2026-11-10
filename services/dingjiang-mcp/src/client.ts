@@ -4,11 +4,11 @@ import {
   governedCommandResultSchema,
   materialVerificationResultSchema,
   evidenceConfirmationResultSchema,
-  evidenceProposalReviewListSchema,
   type WorkExecutionRequest,
   type MaterialVerificationRequest,
   type EvidenceConfirmationRequest,
   integrationCurrentWorkItemSchema,
+  integrationEvidenceBundleSchema,
   integrationEvidenceDetailSchema,
   integrationEvidenceListSchema,
   integrationExperienceEvidenceSchema,
@@ -23,7 +23,9 @@ import {
   integrationSourceVersionSchema,
   integrationSuccessEnvelopeSchema,
   integrationValidationWorkpaperSchema,
+  integrationWorkContextSchema,
   integrationWorkItemListSchema,
+  integrationWorkspaceResumeSchema,
   workpaperProposeResultSchema,
   materialCreateResultSchema,
   evidenceProposeResultSchema,
@@ -149,6 +151,11 @@ export const integrationEventsSchema = z.object({
 });
 
 export class DingjiangIntegrationClient {
+  constructor(
+    private readonly readSignal?: AbortSignal,
+    private readonly boundToken?: string,
+  ) {}
+
   private async request<T>(
     path: string,
     dataSchema: z.ZodType<T>,
@@ -157,7 +164,12 @@ export class DingjiangIntegrationClient {
     const url = new URL(path.replace(/^\//, ""), integrationBaseUrl());
     // Configuration errors must keep their own message instead of being
     // reclassified as network failures.
-    const token = apiToken();
+    const token = this.boundToken ?? apiToken();
+    const timeout = AbortSignal.timeout(resolveTimeoutMs());
+    const signal =
+      options.method === "GET" && this.readSignal
+        ? AbortSignal.any([this.readSignal, timeout])
+        : timeout;
     const response = await fetch(url, {
       redirect: "error",
       ...(options.method === "POST" ? { method: "POST" } : {}),
@@ -172,7 +184,7 @@ export class DingjiangIntegrationClient {
       ...(options.body === undefined
         ? {}
         : { body: JSON.stringify(options.body) }),
-      signal: AbortSignal.timeout(resolveTimeoutMs()),
+      signal,
     }).catch((error: unknown) => {
       throw classifyFetchError(error);
     });
@@ -219,6 +231,27 @@ export class DingjiangIntegrationClient {
     return this.get(
       `integration/projects/${encodeURIComponent(projectId)}/context`,
       integrationProjectContextSchema,
+    );
+  }
+
+  getWorkContext(projectId: string) {
+    return this.get(
+      `integration/projects/${encodeURIComponent(projectId)}/work-context`,
+      integrationWorkContextSchema,
+    );
+  }
+
+  getEvidenceBundle(projectId: string) {
+    return this.get(
+      `integration/projects/${encodeURIComponent(projectId)}/evidence-bundle`,
+      integrationEvidenceBundleSchema,
+    );
+  }
+
+  getWorkspaceResume() {
+    return this.get(
+      "integration/workspace/resume",
+      integrationWorkspaceResumeSchema,
     );
   }
 
@@ -358,12 +391,6 @@ export class DingjiangIntegrationClient {
       request,
       evidenceConfirmationResultSchema,
       request.correlationId,
-    );
-  }
-  getEvidenceProposals(projectId: string) {
-    return this.get(
-      `integration/projects/${encodeURIComponent(projectId)}/evidence/proposals`,
-      evidenceProposalReviewListSchema,
     );
   }
 

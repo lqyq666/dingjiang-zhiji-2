@@ -1,8 +1,8 @@
 # Dingjiang MCP
 
-实现说明（为什么零依赖、四个方法怎么落地、哪些故意不做）见 [PROTOCOL.md](PROTOCOL.md)。
+本地 stdio MCP 将工具调用转成带 Bearer 令牌的 `/api/integration/*` 请求。本机可以用 HTTP，远程 API 需用 HTTPS。默认业务面有 7 个只读工具和 6 个受治理写工具。人工确认由对应身份发起，Evidence Proposal 要经过核验才可能成为事实。 [调用链和协议实现](PROTOCOL.md)
 
-本地 stdio MCP 只调用 loopback `/api/integration/*`，不访问 PostgreSQL、业务文件或厂商 SDK。默认提供 13 个受限业务入口：7 个读取入口、6 个受治理写入口。Evidence Proposal 仍非 FACT；人工确认动作须由对应身份在 WorkBuddy 明确发起。Web 只读展示事实、过程和经营数据。
+从仓库根目录运行 `pnpm demo:mcp` 可以回放一次完整的延期项目处理过程，并在终端查看权限、幂等回执和数据回读。 [演示说明](../../docs/demo/mcp-workspace-demo.md)
 
 ## 启动前提
 
@@ -43,7 +43,8 @@ pnpm --filter @dingjiang/mcp build
 
 - 认命名空间工具名（`work.context`、`evidence.bundle`）的客户端：按上面的配置，得到 business 面 13 个工具。
 - 只认扁平工具名（`get_project_context`、`list_evidence`）的客户端：在 `env` 里加 `"DINGJIANG_MCP_TOOL_SURFACE": "compatibility"`，该进程给 23 个工具。
-- 两类都要用就配两条条目、各起一个进程；令牌可以复用，工具面互不影响。
+- 两类客户端都要接入时，可以配置两条条目，各自启动进程。
+- 只读接入在 `env` 里加 `"DINGJIANG_MCP_READ_ONLY": "1"`，业务面提供 7 个只读工具，兼容面提供 17 个。直接调用写工具也会在 MCP 层被拦截。
 
 ### Codex CLI
 
@@ -79,6 +80,32 @@ disabled_tools = ["work.execute", "material.verify", "evidence.confirm", "workpa
 
 **WorkBuddy 5.3.14 的实测差异**：它不展开 `env` 里的 `${VAR}`，也不会让已运行进程重新继承 Windows 用户环境变量。因此令牌要直接写进当前用户的 `~/.workbuddy/mcp.json`（明文，仅本机，不要提交）。改完配置要新建会话——stdio 进程随会话启动，旧进程读不到新值。
 
+## 远程接入
+
+远程入口由官方 TypeScript SDK 提供 Streamable HTTP。它逐请求验证 OAuth access token。stdio 宿主继续使用原来的启动命令和双版本协议。
+
+把以下配置注入远程进程。公开地址应是客户端访问的完整 HTTPS URL，并与 OAuth audience 一致。应用监听本机回环地址，HTTPS 反向代理转发时保留公开地址的 `Host`。本地验证可用回环 HTTP。
+
+| 配置                                | 用途                                                                                                                   |
+| ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `DINGJIANG_MCP_HTTP_URL`            | 公开资源 URL，路径固定为 `/mcp`                                                                                        |
+| `DINGJIANG_MCP_HTTP_PORT`           | 本机监听端口，默认 `3002`                                                                                              |
+| `DINGJIANG_MCP_OAUTH_ISSUER`        | 信任的发行方标识，和 JWT 的 `iss` 完全一致                                                                             |
+| `DINGJIANG_MCP_OAUTH_JWKS_URL`      | 发行方的 JWKS 地址                                                                                                     |
+| `DINGJIANG_MCP_OAUTH_BINDINGS_JSON` | JSON 数组，每个 `{ "subject": "...", "integrationToken": "..." }` 把发行方的 `sub` 绑定到该身份独有的 Integration 令牌 |
+| `DINGJIANG_API_BASE_URL`            | Integration API 地址，默认本机 `http://127.0.0.1:3001/api`                                                             |
+
+发行方提供 OAuth 或 OIDC 发现、授权码与 PKCE S256，并为该资源签发 JWT access token。入口接受 `typ=at+jwt`、RS256 或 ES256 签名的令牌，验证发行方、audience、签名和有效期，并读取 `sub`、`client_id` 和空格分隔的 `scope`。客户端注册和用户授权由发行方管理。
+
+```bash
+pnpm --filter @dingjiang/mcp build
+pnpm --filter @dingjiang/mcp start:http
+```
+
+客户端选择 Streamable HTTP，填公开 `/mcp` URL。未授权访问返回 401 和指向 `/.well-known/oauth-protected-resource/mcp` 的 `WWW-Authenticate`，客户端据此查找发行方。令牌校验失败返回 401 `invalid_token`。发行方的公钥服务不可用时返回 500 `server_error`，原令牌可在公钥服务恢复后重试。基本查询需要 `dingjiang:mcp:read`。有读范围时只看到只读工具，另获 `dingjiang:mcp:write` 才能使用受治理写工具。直接调用当前工具面屏蔽的写工具返回 `UNKNOWN_TOOL`。
+
+`DINGJIANG_MCP_READ_ONLY=1` 把整个进程限制为只读。Integration API 用绑定的独立业务令牌检查租户、角色、项目和操作权限。两个入口使用同一套版本校验、幂等和回执逻辑。 [MCP 授权规范](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization)
+
 ## 密钥与轮换
 
 - 令牌只放两处：API 进程与 MCP 进程的环境变量，两边必须一致；MCP 进程的令牌不进入工具参数，AI 也无法读取。
@@ -91,7 +118,9 @@ disabled_tools = ["work.execute", "material.verify", "evidence.confirm", "workpa
 
 stdio 入口由 `src/stdio.ts` 统一调度，`server.ts` 只负责进程与流接线：
 
-- 请求串行处理：受治理写入口不会并发执行，响应顺序与请求顺序一致；`dispatch.drain()` 可等待已接收行全部应答。
+- 同一会话相邻的只读工具调用最多同时执行 4 个。已受理请求按原顺序发出响应，初始化、受治理写入等串行请求隔开读调用组。
+- `notifications/cancelled` 可取消排队或运行中的只读调用，也可丢弃尚未发出的读响应。运行中的取消会中止 MCP 发出的 HTTP 请求及响应体读取。受治理写入继续等待原回执。
+- 默认最多接受 64 个尚未完成的请求，包含等待按序发出的结果。队列满时立即返回 `QUEUE_OVERFLOW`，取消通知仍可处理。`dispatch.drain()` 等待已接收请求完成。
 - 异常兜底：handler 抛出的异常转换为 `-32603`，诊断写 stderr，不进入 stdout 协议流，也不中断后续请求。
 - 单行上限：默认 1 MiB，可用 `DINGJIANG_MCP_MAX_LINE_BYTES` 调整（上限 64 MiB）；超限返回 `-32600` 与 `REQUEST_TOO_LARGE`，在解析前拒绝。
 - 背压：stdout 写满时等待 `drain`，避免大批量响应乱序。
@@ -106,16 +135,16 @@ Integration client 将失败分为三类，避免把服务端问题误报为调�
 
 ## 错误码与处置
 
-工具失败时返回 `isError: true`，并在 `structuredContent` 里给出 `code` / `message` / `retryable` / `requiresHuman`，API 侧失败还带 `correlationId`。`content.text` 是同一份 JSON，供只读文本的宿主使用。
+工具失败时返回 `isError: true`。`content.text` 中的 JSON 包含 `code`、`message`、`retryable` 和 `requiresHuman`。API 侧失败还带 `correlationId`。常规工具错误也提供同一份 `structuredContent`。
 
 | code                                      | 来源     | 含义                                        | 处置                                               |
 | ----------------------------------------- | -------- | ------------------------------------------- | -------------------------------------------------- |
 | `INVALID_REQUEST`                         | MCP      | 工具参数不符合 contract                     | 按提示修正参数；不要改 `requestId` 重试            |
-| `UNKNOWN_TOOL`                            | MCP      | 工具名不在本会话的工具面                    | 先 `tools/list` 确认；旧宿主可能要用兼容面的扁平名 |
+| `UNKNOWN_TOOL`                            | MCP      | 工具名未知或被只读模式拦截                  | 用 `tools/list` 查找当前工具面中的名称             |
 | `TOOL_UNAVAILABLE`                        | MCP      | 未预期的内部异常                            | 按 `correlationId` 查 API 日志；不要盲目重试       |
-| `CONTEXT_DRIFT`                           | MCP      | 当前项目与当前事项不一致                    | 重新 `workspace.resume` 后再试                     |
 | `REQUEST_TOO_LARGE`                       | stdio    | 单行超过 `DINGJIANG_MCP_MAX_LINE_BYTES`     | 缩减 payload，或调大上限（≤ 64 MiB）               |
 | `HANDLER_FAILURE`                         | stdio    | handler 抛异常，已隔离                      | 看 stderr；后续请求仍会继续处理                    |
+| `AGGREGATE_RESULT_TOO_LARGE`              | MCP      | 聚合工具结果超过 512 KiB                    | 改用范围更小的只读工具                             |
 | `FORBIDDEN`                               | API      | 身份、scope 或项目越权                      | 换有权限的身份；聚合工具不会把它降级成「暂无数据」 |
 | `NOT_FOUND`                               | API      | 资源不存在或不在授权范围                    | 单条工具原样返回；聚合工具降级为 `null`            |
 | `RATE_LIMITED`                            | API      | 单凭证每分钟请求超过上限                    | 按 `Retry-After` 等待后重试；读写额度分开计        |
@@ -126,19 +155,13 @@ Integration client 将失败分为三类，避免把服务端问题误报为调�
 
 `TOOL_UNAVAILABLE` 的 message 是固定文案：任意异常的原文可能带出文件路径或内部标识，因此不回显给宿主；需要定位时用 `correlationId`。
 
-## 会话档案（协议版本与工具面）
+## 会话档案
 
-两个会话可能不同的只有两件事：协商到的协议版本，以及这个部署提供哪套工具面。它们在 `initialize` 时决定一次，保存在 `createMcpHandler` 的闭包里，`tools/list` 按**本次会话**的档案组装：
+进程启动时固定工具面和只读策略。同一 stdio 入口支持 `2025-06-18` 的 `initialize` 握手，以及 `2026-07-28` 的 `server/discover` 和逐请求版本校验。两种协议共享工具注册表和声明顺序。
 
-- 协议版本按调用方声明协商；旧版本不会收到 `outputSchema`，因为客户端会拿自己无法校验的契约为难。
-- 工具面是**部署决策**：`DINGJIANG_MCP_TOOL_SURFACE=compatibility` 时所有会话都用兼容面；宿主名不能覆盖运维的显式选择。
-- 未握手就 `tools/list` 时使用默认档案，既有部署行为不变。
+`DINGJIANG_MCP_READ_ONLY=1` 同时限制 `tools/list` 和 `tools/call`，判断依据是注册表中的读写分类。未设置、空值或 `0` 使用常规模式，其他值会使进程启动失败。API 仍按令牌核验租户、角色、权限范围和项目，并校验受治理写入的 `requestId` 与 `expectedVersion`。
 
-工具定义只有一份：`protocol.ts` 的 `toolRegistry` 收录全部 28 个工具，两套工具面只是它上面的有序名单，共享同一批 `ToolDescriptor` 实例。`dispatchedToolNames` 仍独立手写，供 `tool-contract.test.ts` 双向比对声明与实现——它不能由注册表自动生成，否则守卫会空转。
-
-**红线**：会话档案只影响「广告哪些元数据」，绝不改变租户、角色、scope、`requestId` 幂等与 `expectedVersion` 校验；这些统一在 API 侧执行，工具参数也不接受身份字段。
-
-`createMcpHandler` 返回的是与传输无关的纯函数，`server.ts` 只把 stdio 接上，因此新增传输是新写一个 dispatcher，不需要改协议层。契约评测会把 40 个用例在 4 组（2 协议版本 × 2 工具面）会话组合下各跑一遍，确认降级没有顺手把权限一起降掉。
+`protocol.ts` 校验并分发 JSON-RPC，`stdio.ts` 负责限流、并发、取消和按序回包。契约评测在两个协议版本和两套工具面的四种组合中，各运行同一批 40 个用例。
 
 ## 工具元数据：让治理边界对宿主可见
 
@@ -158,11 +181,27 @@ Integration client 将失败分为三类，避免把服务端问题误报为调�
 
 规范明确 annotations 只是**不可信提示**，不能作为授权依据。本服务不靠它做权限判断：角色、scope、阶段与完成条件仍由 Integration API 校验，annotations 只影响宿主 UX。
 
-`outputSchema` 由全部 28 个工具声明，直接取自 client 校验响应所用的那批 Zod schema（`z.toJSONSchema(schema, { io: "output" })`），所以 `structuredContent` 与声明同构是构造出来的，不是承诺出来的。三个聚合工具（`workspace.resume`、`work.context`、`evidence.bundle`）由多个 payload 拼装，契约是显式写的；返回前再校验顶层字段是否齐全，防的是拼装漏字段——子结构已由 client 在解析每个子响应时校验过，重复校验只会逼测试夹具去伪造完整性。`project.next_action` 的输出是本服务自建对象，于是定义显式 schema 并在返回前 `parse`，使 `classification` 不可能出现 `PROPOSAL` 之外的值。
+全部 28 个工具都声明 `outputSchema`。单项工具复用 client 校验 HTTP 响应时用的 Zod 契约。三个聚合工具使用同一份 Zod 契约裁剪返回值并发布 `outputSchema`。业务 API 派生的 `project.next_action` 按共享契约返回 `PROPOSAL`。
 
-`initialize` 结果携带 `instructions`，把治理不变量（PROPOSAL 不是 FACT、写前必读 `work.operations`、超时复用 requestId、定稿仅 OWNER / 发布仅 EXPERT_REVIEWER）交给客户端放进模型上下文，而不是指望每个宿主的提示词恰好写对。
+| 聚合工具           | 保留与裁剪                                                                                                                                        |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `work.context`     | 阶段保留状态、进度和关口，事项细节集中在 `currentWorkItem` 与 `workItems`。保留来源事实、证据和材料缺口。上下文中的材料保留元数据，省略文件预览。 |
+| `workspace.resume` | 通过一次授权快照返回阶段摘要、当前事项和下一动作。证据和材料集中在顶层，`context.sourceTask` 保留事实和材料缺口。                                 |
+| `evidence.bundle`  | 保留证据原文与定位、授权的材料预览、证据提案以及底稿当前和最近确认版本。底稿省略历史版本与上下文中重复的材料预览。                                |
 
-协议版本只声明 `2025-06-18`。请求旧版本的客户端会收到这个值并自行决定能否继续——这是规范允许的协商方式，服务端不假装支持一个没人验证过的修订版。此前保留过 `2025-03-26` 分支（对它不下发 `outputSchema`），因为没有真实客户端使用而删除：一条没人走的兼容分支，只会让「会话承诺了什么」变得难以核对。
+三个聚合工具各发一次 Integration GET 请求。API 在各自的 PostgreSQL 只读快照内读取数据并组装结果。
+
+| 工具               | Integration 入口                                | 所需 scopes                                                                         |
+| ------------------ | ----------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `workspace.resume` | `/api/integration/workspace/resume`             | `project:read`、`workitem:read`、`evidence:read`、`material:read`、`workpaper:read` |
+| `work.context`     | `/api/integration/projects/:id/work-context`    | `project:read`、`workitem:read`                                                     |
+| `evidence.bundle`  | `/api/integration/projects/:id/evidence-bundle` | `project:read`、`evidence:read`、`material:read`、`workpaper:read`                  |
+
+升级时先让 API 提供对应入口，再更新 MCP 进程。
+
+512 KiB 上限适用于 JSON-RPC 的完整 `result` 对象，按 UTF-8 计入 `structuredContent`、`content.text` 和新版协议元数据。超限通过 `isError: true` 和 `content.text` 中的 JSON 返回 `AGGREGATE_RESULT_TOO_LARGE` 和 `limitBytes`，供按成功 schema 校验结构化结果的宿主识别。`workspace.resume` 超限时可按需调用 `work.context` 或 `evidence.bundle`。兼容面提供 `get_evidence`、`get_material_preview` 和 `get_validation_workpaper` 等单项读取。
+
+`initialize` 和 `server/discover` 都返回 `instructions`。宿主可据此展示 PROPOSAL 的来源、确认受治理写入，并在超时时复用 `requestId`。新版每次调用都携带版本和能力字段。 [协议说明](PROTOCOL.md#3-协议方法)
 
 `src/tool-contract.test.ts` 把这些元数据钉在入参契约上：受治理写入口的唯一结构特征是同时必填 `requestId` 与 `expectedVersion`，测试据此反推写集合，再断言没有任何写入口被标成只读——标注与实现无法一起悄悄漂移。
 
@@ -229,4 +268,4 @@ business 面 13 个、compatibility 面 23 个，去重 28 个；下表按读 / 
 
 不存在工作底稿或材料正文时返回安全的 NOT_FOUND/BODY_NOT_AVAILABLE 语义，不伪造内容；材料预览不返回原始 bytes、绝对路径或存储键。
 
-单个读工具（`get_validation_workpaper`）保留 `NOT_FOUND`：调用方明确要那一条，不存在就是不存在。聚合工具（`workspace.resume`、`evidence.bundle`）把 `NOT_FOUND` 降级为 `null`——项目刚建、底稿尚未产生时，`resume` 恰好是最需要可用的时刻，不能因为一个可选子资源缺失就整体失败。`FORBIDDEN` 不降级：真实 API 对「缺 scope」和「越权项目」都返回 403，对「已授权但未创建」返回 404，两者可区分，所以这个降级不会把授权失败伪装成「暂无数据」。
+`get_validation_workpaper` 在底稿缺失时返回 `NOT_FOUND`。`workspace.resume` 和 `evidence.bundle` 在 API 验证项目及底稿读权限后，用 `workpaper: null` 表示底稿缺失。权限不足返回 `FORBIDDEN`，找不到授权项目时返回 `NOT_FOUND`。

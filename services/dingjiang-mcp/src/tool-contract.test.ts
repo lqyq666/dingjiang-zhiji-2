@@ -6,22 +6,13 @@ import {
   createMcpHandler,
   dingjiangCompatibilityTools,
   dingjiangTools,
-  dispatchedToolNames,
-  latestProtocolVersion,
+  legacyProtocolVersion,
   outputContractToolCount,
   registeredToolNames,
   serverVersion,
   type IntegrationClient,
   type ToolDescriptor,
 } from "./protocol";
-
-const declaredToolNames = [
-  ...new Set(
-    [...dingjiangTools, ...dingjiangCompatibilityTools].map(
-      (tool) => tool.name,
-    ),
-  ),
-].sort();
 
 const allTools: ToolDescriptor[] = [
   ...new Map(
@@ -32,8 +23,9 @@ const allTools: ToolDescriptor[] = [
   ).values(),
 ];
 
-// Any method is a valid read stub: the assertion only cares whether dispatch
-// reached an implementation or fell through to UNKNOWN_TOOL.
+const declaredToolNames = allTools.map((tool) => tool.name).sort();
+
+// The stub exercises dispatch without an HTTP dependency.
 const stubClient = (): IntegrationClient =>
   new Proxy(
     {},
@@ -42,25 +34,13 @@ const stubClient = (): IntegrationClient =>
     },
   ) as unknown as IntegrationClient;
 
-const invoke = async (tool: string) => {
-  const client = stubClient();
-  const response = await createMcpHandler(client)({
+const invoke = (tool: string) =>
+  createMcpHandler(stubClient())({
     jsonrpc: "2.0",
     id: `drift-${tool}`,
     method: "tools/call",
     params: { name: tool, arguments: {} },
   });
-  // An unknown tool is now a protocol error (-32602), so the marker lives in
-  // error.data.code rather than in a tool result's text.
-  const error = (
-    response as { error?: { code?: number; data?: { code?: string } } }
-  ).error;
-  if (error) return error.data?.code ?? `ERROR_${error.code}`;
-  return (
-    (response as { result?: { content?: Array<{ text?: string }> } }).result
-      ?.content?.[0]?.text ?? ""
-  );
-};
 
 /**
  * A governed write is identifiable from its input contract alone: the governed
@@ -104,7 +84,7 @@ describe("agent eval task set", () => {
       // A renamed or removed tool must fail here, not in a manual run.
       for (const tool of task.expect.tools)
         expect(
-          dispatchedToolNames.has(tool),
+          declaredToolNames.includes(tool),
           `${task.id} 引用了未声明的工具 ${tool}`,
         ).toBe(true);
     }
@@ -112,31 +92,13 @@ describe("agent eval task set", () => {
 });
 
 describe("MCP tool contract drift guard", () => {
-  it("declares and implements exactly the same tool names", () => {
-    expect([...dispatchedToolNames].sort()).toEqual(declaredToolNames);
-  });
-
   it("keeps the handler registry and the declared surface identical", () => {
-    // Both directions: a handler nobody declares is unreachable code, and a
-    // declared tool without a handler is a call that can only fail. The switch
-    // this replaced could only express the second half, through `default`.
     expect([...registeredToolNames].sort()).toEqual(declaredToolNames);
   });
 
   it("keeps every declared tool reachable through the dispatcher", async () => {
-    const unknown: string[] = [];
-    for (const tool of declaredToolNames) {
-      const text = await invoke(tool);
-      if (text.includes("UNKNOWN_TOOL")) unknown.push(tool);
-    }
-    expect(unknown).toEqual([]);
-  });
-
-  it("keeps both tool surfaces fully implemented", async () => {
-    expect(dingjiangTools.length).toBe(13);
-    expect(dingjiangCompatibilityTools.length).toBe(23);
-    for (const tool of [...dingjiangTools, ...dingjiangCompatibilityTools])
-      expect(dispatchedToolNames.has(tool.name)).toBe(true);
+    for (const tool of declaredToolNames)
+      expect(await invoke(tool), tool).toHaveProperty("result");
   });
 
   it("resolves shared tools from one registry entry, not from copies", () => {
@@ -276,7 +238,7 @@ describe("MCP protocol surface", () => {
       expect(
         (response as { result: { protocolVersion: string } }).result
           .protocolVersion,
-      ).toBe(latestProtocolVersion);
+      ).toBe(legacyProtocolVersion);
     }
   });
 
@@ -286,7 +248,7 @@ describe("MCP protocol surface", () => {
       jsonrpc: "2.0",
       id: "init",
       method: "initialize",
-      params: { protocolVersion: latestProtocolVersion },
+      params: { protocolVersion: legacyProtocolVersion },
     });
     const result = (
       response as {
@@ -311,7 +273,7 @@ describe("MCP protocol surface", () => {
         jsonrpc: "2.0",
         id: "init",
         method: "initialize",
-        params: { protocolVersion: latestProtocolVersion },
+        params: { protocolVersion: legacyProtocolVersion },
       });
       const response = await handler({
         jsonrpc: "2.0",

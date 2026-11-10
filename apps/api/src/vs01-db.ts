@@ -49,6 +49,8 @@ export const migrations = [
   "0038_feishu_employee_notifications",
   "0039_project_read_indexes",
   "0040_feishu_delivery_reliability",
+  "0041_api_rate_limit_windows",
+  "0042_api_rate_limit_tenant_rls",
 ] as const;
 const tenantId = "tenant-demo";
 const sourceDefinitions = [

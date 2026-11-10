@@ -1,12 +1,25 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Pool } from "pg";
 
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 
-import { createPool, localDatabaseUrl, migrate, resetAndSeed } from "./vs01-db";
+import {
+  createPool,
+  localDatabaseUrl,
+  migrate,
+  migrations,
+  resetAndSeed,
+} from "./vs01-db";
 
 describe("VS01 local database seam", () => {
+  it("registers every SQL migration in filename order", async () => {
+    const files = await readdir(path.resolve(__dirname, "../migrations"));
+    expect(migrations.map((name) => `${name}.sql`)).toEqual(
+      files.filter((name) => name.endsWith(".sql")).sort(),
+    );
+  });
+
   it("accepts only loopback PostgreSQL hosts", () => {
     expect(
       localDatabaseUrl("postgres://demo:demo@localhost:5432/vs01"),

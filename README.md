@@ -3,16 +3,27 @@
 [![CI](https://github.com/lqyq666/dingjiang-zhiji-2/actions/workflows/ci.yml/badge.svg)](https://github.com/lqyq666/dingjiang-zhiji-2/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
-鼎江智绩是一套面向单企业内部使用的绩效与咨询项目协作系统。它把项目、阶段、任务、材料、证据、审批和经验沉淀放在同一条可追溯业务链中，并通过服务端授权的 MCP 接口连接 WorkBuddy；飞书用于组织同步和人工协作投影。
+鼎江智绩把订单延期工单变成有负责人、证据和阶段门的协作项目。员工在 WorkBuddy 通过自定义 MCP Server 恢复项目、查看下一动作和登记进度。Web 展示业务事实与处理记录，PostgreSQL 保存证据和审计回执。AI 建议标记为 `PROPOSAL`，写入由 API 校验身份、项目权限和版本。
 
-**一句话技术定位**：以 PostgreSQL 为唯一事实源、AI 产出恒为提案、所有写入都要过受治理命令内核的全栈系统。重点不在 CRUD，而在**可追溯性、幂等、租户隔离，以及把工程纪律写成可执行检查**。
+## 运行 MCP 演示
+
+在有 Node.js 22.19+、pnpm 11 和本机 Docker 的环境中运行
+
+```bash
+pnpm install --frozen-lockfile
+pnpm demo:mcp
+```
+
+命令使用合成订单和临时 PostgreSQL，运行实际的 stdio 和 OAuth Streamable HTTP 链路。终端会打印项目与证据来源、只读拦截、授权提交、幂等回执和进度回读。临时数据库和测试进程随回放结束清理。 [远程 MCP 接入](services/dingjiang-mcp/README.md#远程接入)
+
+[演示步骤与录屏顺序](docs/demo/mcp-workspace-demo.md) · [连接 MCP 宿主](services/dingjiang-mcp/README.md) · [全栈本地启动](#本地启动)
 
 ## 技术速览
 
 | 维度     | 内容                                                                                                                                   |
 | -------- | -------------------------------------------------------------------------------------------------------------------------------------- |
 | 技术栈   | TypeScript（strict）· NestJS · Next.js · PostgreSQL 17 + pgvector · Zod · pnpm / Turborepo · Vitest · Docker Compose                   |
-| 代码规模 | 3 个运行时 + 1 个共享契约包；41 个迁移 / 60 张表 / 86 条 HTTP 路由 / MCP 28 个工具                                                     |
+| 代码规模 | 3 个运行时 + 1 个共享契约包；42 个迁移 / 60 张表 / 89 条 HTTP 路由 / MCP 28 个工具                                                     |
 | 工程治理 | 依赖方向写成 `severity: error` 规则；`tooling/architecture/` 下 6 个守卫测试把边界、尺寸、孤儿代码、接口面、许可证和文档数字钉在代码上 |
 | 可验证性 | `pnpm verify` 串起依赖分析、lint、类型、单测、构建、MCP 评测、格式与集成测试；五层集成测试 0 跳过，tier4 起真实进程与真实 PostgreSQL   |
 | 性能     | 三条热读路径有同机「删索引 / 建索引」前后对比，脚本可复现（[性能基准](#性能基准)）                                                     |
@@ -198,7 +209,7 @@ pnpm test:coverage   # tier1 全量 + 27 开关，产出覆盖率并按阈值退
 
 CI 的 `integration` job 会在 `test:integration` 之后跑它，阈值定义在 `apps/api/vitest.config.mts`（当前约 74% 行、81% 函数、72% 语句、62% 分支）。
 
-上面「核心边界」那几条不是文档承诺，而是可执行的检查。`pnpm depcruise`（`.dependency-cruiser.cjs`）把依赖方向写成规则并接入 CI：Web 与 MCP 适配层不得 import API 实现或数据库驱动，合同不得依赖实现，API 不得反向依赖入口层。当前扫描 303 个模块、675 条依赖，零违规；这两个数字由 `documentation.test.ts` 直接调用依赖分析器核对，模块一变文档不跟着改就会红。
+上面「核心边界」那几条不是文档承诺，而是可执行的检查。`pnpm depcruise`（`.dependency-cruiser.cjs`）把依赖方向写成规则并接入 CI：Web 与 MCP 适配层不得 import API 实现或数据库驱动，合同不得依赖实现，API 不得反向依赖入口层。当前扫描 312 个模块、700 条依赖，零违规；这两个数字由 `documentation.test.ts` 直接调用依赖分析器核对，模块一变文档不跟着改就会红。
 
 同一批守卫里还有几道防漂移的：`tooling/architecture/orphan-files.test.ts` 扫出**没有任何地方 import 的源码文件**（CLI 入口、Next.js 约定文件与 package script 指向的入口已排除），所以"实现了但实际不可达"的代码进不来——它一进来 CI 就红，并指名是哪个文件。`documentation.test.ts` 核对文档里提到的命令与链接是否真的存在，`licence.test.ts` 用 sha256 钉住许可证原文，`api-surface.test.ts` 让 86 条路由的文档无法与代码脱节。
 
@@ -233,9 +244,11 @@ pnpm bench:read-path
 
 绝对数字会随机器变化，可复现的是"有没有索引"这一组对比。
 
+MCP 读路径也可在同一个隔离库上交替运行两套 API 构建，比较 SQL 次数和端到端 P95。运行说明见 [MCP 读路径基准脚本](scripts/bench/mcp-read-path.mjs)。
+
 ## 接口面文档
 
-`docs/api-surface.md` 列出全部 85 个 HTTP 路由，按控制器分组。它由 `pnpm docs:api-surface` 从控制器源码用 TypeScript 解析器生成，不是手写的，所以不会漏。`tooling/architecture/api-surface.test.ts` 每次测试都会核对文档与代码：新增路由忘了重新生成文档，CI 会红并指出是哪一条。
+`docs/api-surface.md` 列出全部 89 个 HTTP 路由，按控制器分组。它由 `pnpm docs:api-surface` 从控制器源码用 TypeScript 解析器生成，不是手写的，所以不会漏。`tooling/architecture/api-surface.test.ts` 每次测试都会核对文档与代码：新增路由忘了重新生成文档，CI 会红并指出是哪一条。
 
 ## 决策记录
 
@@ -264,7 +277,7 @@ pnpm --filter @dingjiang/mcp eval
 
 覆盖七类不变量：工具声明与实现一致（28/28 可达）、工具元数据完备（annotations 全覆盖、28 个 `outputSchema`、`initialize.instructions` 携带治理不变量）、读写 happy path（24/24）、越权字段注入拦截（7/7）、非法参数拦截（6/6）、传输故障收敛（超时结构化返回且不泄露授权头）、协议契约（6/6）。任一失败即退出码 1，CI 在 `pnpm build` 后执行该评测。方法与未覆盖范围见 `services/dingjiang-mcp/evals/README.md`。
 
-MCP 工具面除参数 schema 外还声明 `annotations`（读写、破坏性、幂等、开放世界）与 `outputSchema`：宿主据此决定是否在受治理写入口前弹确认，而 `outputSchema` 直接取自已用于校验响应的 Zod schema，因此 `structuredContent` 与声明同构是构造出来的。设计取舍见 `services/dingjiang-mcp/README.md`。
+MCP 工具面声明 `annotations`（读写、破坏性、幂等、开放世界）与 `outputSchema`。宿主可用标注决定何时弹出写入确认。单项工具的输出契约复用 HTTP 响应 schema，聚合工具按发布的 Zod 契约裁剪并校验结果。详见 `services/dingjiang-mcp/README.md`。
 
 ## 延伸阅读
 
@@ -278,7 +291,7 @@ MCP 工具面除参数 schema 外还声明 `annotations`（读写、破坏性、
 | [docs/api-surface.md](docs/api-surface.md)                         | 全部 86 条 HTTP 路由（自动生成，带防漂移守卫）                     |
 | [docs/research/](docs/research/)                                   | 前期调研：顾问工作方法、绩效顾问工作流、界面工作流研究             |
 | [docs/product/](docs/product/)                                     | 前端 POC 蓝图与视觉资产                                            |
-| [docs/demo/](docs/demo/)                                           | 演示脚本：经验智能这一段的完整走查                                 |
+| [docs/demo/](docs/demo/)                                           | MCP 真实链路回放与经验智能走查                                     |
 | [docs/evals/](docs/evals/)                                         | 模型侧评测：候选模型的边界验证与是否放行的结论                     |
 | [docs/vertical-slice-01/](docs/vertical-slice-01/)                 | 最早的垂直切片契约与验收（历史记录，当前口径已由后续切片覆盖）     |
 | [CONTRIBUTING.md](CONTRIBUTING.md)                                 | 怎么跑起来、改动要过哪些门禁、提交信息怎么写                       |

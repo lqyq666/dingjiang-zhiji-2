@@ -2,7 +2,11 @@ import { createInterface } from "node:readline";
 import { readFileSync } from "node:fs";
 
 import { DingjiangIntegrationClient } from "./client";
-import { createMcpHandler, type JsonRpcResponse } from "./protocol";
+import {
+  createMcpHandler,
+  isReadOnlyToolCall,
+  type JsonRpcResponse,
+} from "./protocol";
 import { createStdioDispatcher } from "./stdio";
 
 const identityFile = process.env.DINGJIANG_MCP_BUILD_IDENTITY_FILE?.trim();
@@ -15,10 +19,11 @@ const readIdentity = (): string => {
   }
 };
 const startupBuildIdentity = readIdentity();
-const handler = createMcpHandler(new DingjiangIntegrationClient(), {
-  startup: startupBuildIdentity,
-  current: readIdentity,
-});
+const handler = createMcpHandler(
+  new DingjiangIntegrationClient(),
+  { startup: startupBuildIdentity, current: readIdentity },
+  (signal) => new DingjiangIntegrationClient(signal),
+);
 const input = createInterface({ input: process.stdin, crlfDelay: Infinity });
 
 const respond = async (payload: JsonRpcResponse): Promise<void> => {
@@ -30,6 +35,7 @@ const respond = async (payload: JsonRpcResponse): Promise<void> => {
 };
 
 const dispatch = createStdioDispatcher(handler, respond, {
+  isReadOnlyRequest: isReadOnlyToolCall,
   onError: (error) => {
     process.stderr.write(
       `dingjiang-mcp handler failure: ${error instanceof Error ? error.message : String(error)}\n`,

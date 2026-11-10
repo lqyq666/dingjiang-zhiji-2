@@ -1,5 +1,10 @@
 import { Inject, Injectable, NotFoundException } from "@nestjs/common";
-import type { TaskMaterial } from "@dingjiang/contracts";
+import type {
+  Project,
+  TaskDetail,
+  TaskMaterial,
+  ValidationWorkpaperVersion,
+} from "@dingjiang/contracts";
 
 import type { AssistantScope, AssistantToolResult } from "./contracts";
 import { rejectModelScopeArguments } from "./scope";
@@ -52,6 +57,107 @@ const safeMaterial = (material: TaskMaterial) => {
   };
 };
 
+export const currentStageFor = (project: Project) =>
+  project.phases.find((phase) =>
+    ["READY", "IN_PROGRESS", "RETURNED", "WAITING_REVIEW"].includes(
+      phase.status,
+    ),
+  ) ??
+  project.phases.at(-1) ??
+  null;
+
+export const hasLiveRootCauseWorkItem = (project: Project) =>
+  project.phases.some(
+    (phase) =>
+      phase.code === "ROOT_CAUSE_VALIDATION" &&
+      phase.tasks.some(
+        (item) => item.origin === "LIVE" && item.owner === "PMC",
+      ),
+  );
+
+export const materialGapsFor = (sourceTask: Pick<TaskDetail, "situations">) =>
+  sourceTask.situations.flatMap((situation) =>
+    situation.requirements
+      .filter((requirement) => !requirement.fulfilled)
+      .map((requirement) => ({
+        situationCode: situation.code,
+        requirementId: requirement.id,
+        label: requirement.label,
+        status:
+          situation.state === "UNVERIFIED"
+            ? ("UNVERIFIED" as const)
+            : ("MISSING" as const),
+      })),
+  );
+
+export const sourceTaskMaterialsFor = (
+  sourceTask: Pick<TaskDetail, "id" | "materials" | "situations">,
+) => ({
+  id: sourceTask.id,
+  materialGaps: materialGapsFor(sourceTask),
+  materials: sourceTask.materials
+    .filter((material) => material.status === "ACTIVE")
+    .map(safeMaterial),
+});
+
+export const projectContextFor = (
+  project: Project,
+  sourceTask: TaskDetail,
+  workpaperVersion: ValidationWorkpaperVersion | null,
+) => {
+  const { materialGaps, materials } = sourceTaskMaterialsFor(sourceTask);
+  const version = hasLiveRootCauseWorkItem(project) ? workpaperVersion : null;
+  const latestConfirmedWorkpaper = version
+    ? {
+        revision: version.revision,
+        conclusion: version.content.conclusion,
+        locator: version.locator,
+        confirmedAt: version.createdAt,
+        confirmedBy: version.requestedBy,
+      }
+    : null;
+  return {
+    project: {
+      id: project.id,
+      name: project.name,
+      status: project.status,
+      currentStage: currentStageFor(project),
+      progress: project.progress,
+      phases: project.phases,
+      outcome: project.outcome,
+      experienceSummary: project.experienceCandidate
+        ? [
+            {
+              id: project.experienceCandidate.id,
+              title: project.experienceCandidate.title,
+              status: project.experienceCandidate.status,
+              locator: project.experienceCandidate.candidateLocator,
+            },
+          ]
+        : [],
+      recentActivities: project.auditTrail.slice(-20).map((event) => ({
+        eventType: event.eventType,
+        phaseCode: event.phaseCode,
+        note: event.note,
+        actor: event.actor,
+        createdAt: event.createdAt,
+      })),
+      latestConfirmedWorkpaper,
+    },
+    sourceTask: {
+      id: sourceTask.id,
+      status: sourceTask.status,
+      facts: sourceTask.facts,
+      evidence: sourceTask.evidence,
+      materialGaps,
+      materials,
+    },
+  };
+};
+
+const sourceTaskInScope = (scope: AssistantScope, sourceTaskId: string) =>
+  !scope.sourceTaskId || scope.sourceTaskId === sourceTaskId;
+
 @Injectable()
 export class Vs01ContextAdapter {
   constructor(
@@ -61,24 +167,20 @@ export class Vs01ContextAdapter {
 
   private async projectForScope(scope: AssistantScope) {
     const project = await this.vs01.project(scope.projectId);
-    if (scope.sourceTaskId && project.sourceTaskId !== scope.sourceTaskId)
-      return null;
-    return project;
+    return sourceTaskInScope(scope, project.sourceTaskId) ? project : null;
+  }
+
+  private async sourceTaskIdForScope(scope: AssistantScope) {
+    const sourceTaskId = await this.vs01.readModel.projectSourceTaskId(
+      scope.projectId,
+    );
+    return sourceTaskInScope(scope, sourceTaskId) ? sourceTaskId : null;
   }
 
   private async latestConfirmedWorkpaper(projectId: string) {
     try {
       const workpaper = await this.vs01.rootCauseWorkpaper(projectId);
-      const version = workpaper.latestConfirmed;
-      return version
-        ? {
-            revision: version.revision,
-            conclusion: version.content.conclusion,
-            locator: version.locator,
-            confirmedAt: version.createdAt,
-            confirmedBy: version.requestedBy,
-          }
-        : null;
+      return workpaper.latestConfirmed;
     } catch (error) {
       // The workpaper is optional outside the one live VS16 root-cause task.
       if (error instanceof NotFoundException) return null;
@@ -94,133 +196,59 @@ export class Vs01ContextAdapter {
     const project = await this.projectForScope(scope);
     if (!project) return { status: "FORBIDDEN" };
     const sourceTask = await this.vs01.task(project.sourceTaskId);
-    const hasLiveRootCauseWorkItem = project.phases.some(
-      (phase) =>
-        phase.code === "ROOT_CAUSE_VALIDATION" &&
-        phase.tasks.some(
-          (item) => item.origin === "LIVE" && item.owner === "PMC",
-        ),
-    );
-    const latestConfirmedWorkpaper = hasLiveRootCauseWorkItem
+    const workpaperVersion = hasLiveRootCauseWorkItem(project)
       ? await this.latestConfirmedWorkpaper(project.id)
       : null;
-    const materialGaps = sourceTask.situations.flatMap((situation) =>
-      situation.requirements
-        .filter((requirement) => !requirement.fulfilled)
-        .map((requirement) => ({
-          situationCode: situation.code,
-          requirementId: requirement.id,
-          label: requirement.label,
-          status: situation.state === "UNVERIFIED" ? "UNVERIFIED" : "MISSING",
-        })),
-    );
     return {
       status: "OK",
       evidenceIds: sourceTask.evidence.map((item) => item.id),
-      data: {
-        project: {
-          id: project.id,
-          name: project.name,
-          status: project.status,
-          currentStage:
-            project.phases.find((phase) =>
-              ["READY", "IN_PROGRESS", "RETURNED", "WAITING_REVIEW"].includes(
-                phase.status,
-              ),
-            ) ??
-            project.phases.at(-1) ??
-            null,
-          progress: project.progress,
-          phases: project.phases,
-          outcome: project.outcome,
-          experienceSummary: project.experienceCandidate
-            ? [
-                {
-                  id: project.experienceCandidate.id,
-                  title: project.experienceCandidate.title,
-                  status: project.experienceCandidate.status,
-                  locator: project.experienceCandidate.candidateLocator,
-                },
-              ]
-            : [],
-          recentActivities: project.auditTrail.slice(-20).map((event) => ({
-            eventType: event.eventType,
-            phaseCode: event.phaseCode,
-            note: event.note,
-            actor: event.actor,
-            createdAt: event.createdAt,
-          })),
-          latestConfirmedWorkpaper,
-        },
-        sourceTask: {
-          id: sourceTask.id,
-          status: sourceTask.status,
-          facts: sourceTask.facts,
-          evidence: sourceTask.evidence,
-          materialGaps,
-          materials: sourceTask.materials
-            .filter((material) => material.status === "ACTIVE")
-            .map((material) => safeMaterial(material)),
-        },
-      },
+      data: projectContextFor(project, sourceTask, workpaperVersion),
     };
   }
 
   /** Material identity is resolved inside the already-authorized source task. */
-  async materialPreview(
-    scope: AssistantScope,
-    input: unknown = {},
-  ): Promise<AssistantToolResult> {
+  async materialPreview(scope: AssistantScope, input: unknown = {}) {
     rejectModelScopeArguments(input);
-    const project = await this.projectForScope(scope);
-    if (!project) return { status: "FORBIDDEN" };
+    const sourceTaskId = await this.sourceTaskIdForScope(scope);
+    if (!sourceTaskId) return { status: "FORBIDDEN" as const };
     const materialId =
       input && typeof input === "object" && "materialId" in input
         ? String((input as { materialId: unknown }).materialId)
         : "";
-    if (!materialId) return { status: "NOT_FOUND" };
-    const sourceTask = await this.vs01.task(project.sourceTaskId);
+    if (!materialId) return { status: "NOT_FOUND" as const };
+    const sourceTask = await this.vs01.readModel.taskMaterials(sourceTaskId);
     const material = sourceTask.materials.find(
       (candidate) =>
         candidate.id === materialId && candidate.status === "ACTIVE",
     );
-    if (!material) return { status: "NOT_FOUND" };
-    const file = material.file;
-    if (
-      !file ||
-      !file.readableByAi ||
-      file.extractionStatus !== "EXTRACTED" ||
-      !file.contentPreview?.trim()
-    ) {
-      return {
-        status: "BODY_NOT_AVAILABLE",
-        data: { material: safeMaterial(material) },
-      };
-    }
+    if (!material) return { status: "NOT_FOUND" as const };
+    const preview = safeMaterial(material);
     return {
-      status: "OK",
-      data: { material: safeMaterial(material) },
+      status: preview.file?.contentPreview
+        ? ("OK" as const)
+        : ("BODY_NOT_AVAILABLE" as const),
+      sourceTaskId: sourceTask.id,
+      data: { material: preview },
     };
   }
 
-  async evidence(
-    scope: AssistantScope,
-    input: unknown = {},
-  ): Promise<AssistantToolResult> {
+  async evidence(scope: AssistantScope, input: unknown = {}) {
     rejectModelScopeArguments(input);
-    const project = await this.projectForScope(scope);
-    if (!project) return { status: "FORBIDDEN" };
-    const task = await this.vs01.task(project.sourceTaskId);
+    const sourceTaskId = await this.sourceTaskIdForScope(scope);
+    if (!sourceTaskId) return { status: "FORBIDDEN" as const };
+    const items = await this.vs01.readModel.taskEvidence(sourceTaskId);
     const requested =
       input && typeof input === "object" && "evidenceId" in input
         ? String((input as { evidenceId: unknown }).evidenceId)
         : undefined;
     const evidence = requested
-      ? task.evidence.filter((item) => item.id === requested)
-      : task.evidence;
-    if (requested && evidence.length === 0) return { status: "NOT_FOUND" };
+      ? items.filter((item) => item.id === requested)
+      : items;
+    if (requested && evidence.length === 0)
+      return { status: "NOT_FOUND" as const };
     return {
-      status: "OK",
+      status: "OK" as const,
+      sourceTaskId,
       evidenceIds: evidence.map((item) => item.id),
       data: { evidence },
     };
@@ -231,11 +259,11 @@ export class Vs01ContextAdapter {
     input: unknown = {},
   ): Promise<AssistantToolResult> {
     rejectModelScopeArguments(input);
-    const project = await this.projectForScope(scope);
-    if (!project) return { status: "FORBIDDEN" };
+    const sourceTaskId = await this.sourceTaskIdForScope(scope);
+    if (!sourceTaskId) return { status: "FORBIDDEN" };
     const events = await this.store.recentWorkEvents({
       ...scope,
-      sourceTaskId: project.sourceTaskId,
+      sourceTaskId,
     });
     return {
       status: "OK",

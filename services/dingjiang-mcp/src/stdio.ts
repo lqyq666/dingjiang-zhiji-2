@@ -2,6 +2,7 @@ import type { JsonRpcRequest, JsonRpcResponse } from "./protocol";
 
 export type StdioHandler = (
   request: JsonRpcRequest,
+  signal?: AbortSignal,
 ) => Promise<JsonRpcResponse | undefined>;
 
 export type StdioResponder = (payload: JsonRpcResponse) => void | Promise<void>;
@@ -23,11 +24,7 @@ export const resolveMaxLineBytes = (
   return Math.min(parsed, ABSOLUTE_MAX_LINE_BYTES);
 };
 
-/**
- * How many lines may wait for the serial queue. The queue exists so governed
- * writes never overlap; it must not become unbounded memory when a handler is
- * slow. 64 is well above any real Agent's in-flight count.
- */
+/** Maximum accepted requests, including in-flight calls and buffered replies. */
 export const DEFAULT_MAX_PENDING_REQUESTS = 64;
 const ABSOLUTE_MAX_PENDING_REQUESTS = 1_024;
 
@@ -41,15 +38,8 @@ export const resolveMaxPendingRequests = (
   return Math.min(parsed, ABSOLUTE_MAX_PENDING_REQUESTS);
 };
 
-/** Best effort: an overflowing line still deserves its own request id back. */
-const idOfLine = (line: string): string | number | null => {
-  try {
-    const id = (JSON.parse(line) as { id?: unknown } | null)?.id;
-    return typeof id === "string" || typeof id === "number" ? id : null;
-  } catch {
-    return null;
-  }
-};
+const MAX_CONCURRENT_READS = 4;
+type ParsedLine = { request: JsonRpcRequest } | { error: JsonRpcResponse };
 
 const errorResponse = (
   id: JsonRpcResponse["id"],
@@ -62,27 +52,49 @@ const errorResponse = (
   error: data === undefined ? { code, message } : { code, message, data },
 });
 
-/**
- * JSON-RPC over stdio dispatcher.
- *
- * The previous inline implementation started one detached async task per line,
- * which let governed writes run concurrently, made response order depend on
- * network latency, and turned a rejected handler into an unhandled rejection
- * that left the caller waiting forever. This dispatcher instead:
- * - serialises every request, so governed writes never overlap and responses
- *   keep request order;
- * - converts a thrown handler into `-32603` and keeps serving later lines;
- * - rejects oversized lines before parsing, bounding memory per request;
- * - awaits the responder, so stdout backpressure cannot reorder writes.
- *
- * Diagnostic details go to `onError` (stderr), never into the protocol stream.
- */
+const parseLine = (line: string, maxLineBytes: number): ParsedLine => {
+  if (Buffer.byteLength(line, "utf8") > maxLineBytes)
+    return {
+      error: errorResponse(null, -32600, "Invalid Request", {
+        code: "REQUEST_TOO_LARGE",
+        maxLineBytes,
+      }),
+    };
+
+  try {
+    return { request: JSON.parse(line) as JsonRpcRequest };
+  } catch {
+    return { error: errorResponse(null, -32700, "Parse error") };
+  }
+};
+
+type RequestId = string | number;
+
+const requestId = (id: unknown): RequestId | null =>
+  typeof id === "string" || (typeof id === "number" && Number.isFinite(id))
+    ? id
+    : null;
+
+const cancelledRequestId = (params: unknown): RequestId | null => {
+  if (params === null || typeof params !== "object" || Array.isArray(params))
+    return null;
+  const { requestId: id, reason } = params as {
+    requestId?: unknown;
+    reason?: unknown;
+  };
+  return reason === undefined || typeof reason === "string"
+    ? requestId(id)
+    : null;
+};
+
+/** Runs read calls concurrently between serial requests and flushes replies in input order. */
 export const createStdioDispatcher = (
   handler: StdioHandler,
   respond: StdioResponder,
   options: {
     maxLineBytes?: number;
     maxPendingRequests?: number;
+    isReadOnlyRequest?: (request: JsonRpcRequest) => boolean;
     onError?: (error: unknown) => void;
   } = {},
 ): StdioDispatcher => {
@@ -90,62 +102,119 @@ export const createStdioDispatcher = (
   const maxPendingRequests =
     options.maxPendingRequests ?? resolveMaxPendingRequests();
   const onError = options.onError ?? (() => undefined);
-  let queue: Promise<void> = Promise.resolve();
+  let replies: Promise<void> = Promise.resolve();
+  // Each read group starts after the preceding serial request and its reply.
+  let serialBarrier = replies;
   let pending = 0;
+  let activeReads = 0;
+  const waitingReaders: Array<() => void> = [];
+  const cancellableReads = new Map<RequestId, AbortController>();
 
-  const execute = async (line: string): Promise<void> => {
-    const trimmed = line.trim();
-    if (!trimmed) return;
-    if (Buffer.byteLength(trimmed, "utf8") > maxLineBytes) {
-      await respond(
-        errorResponse(null, -32600, "Invalid Request", {
-          code: "REQUEST_TOO_LARGE",
-          maxLineBytes,
-        }),
-      );
-      return;
-    }
-    let request: JsonRpcRequest;
+  const send = async (response: JsonRpcResponse): Promise<void> => {
     try {
-      request = JSON.parse(trimmed) as JsonRpcRequest;
-    } catch {
-      await respond(errorResponse(null, -32700, "Parse error"));
-      return;
-    }
-    try {
-      const response = await handler(request);
-      if (response) await respond(response);
+      await respond(response);
     } catch (error) {
       onError(error);
-      await respond(
-        errorResponse(request.id ?? null, -32603, "Internal error", {
-          code: "HANDLER_FAILURE",
-        }),
-      );
     }
   };
 
+  const execute = async (
+    request: JsonRpcRequest,
+    signal?: AbortSignal,
+  ): Promise<JsonRpcResponse | undefined> => {
+    if (signal?.aborted) return;
+    try {
+      return await handler(request, signal);
+    } catch (error) {
+      if (signal?.aborted) return;
+      onError(error);
+      return errorResponse(requestId(request?.id), -32603, "Internal error", {
+        code: "HANDLER_FAILURE",
+      });
+    }
+  };
+
+  const executeRead = async (request: JsonRpcRequest, signal: AbortSignal) => {
+    if (signal.aborted) return;
+    if (activeReads >= MAX_CONCURRENT_READS)
+      await new Promise<void>((resolve) => waitingReaders.push(resolve));
+    else activeReads++;
+
+    try {
+      return await execute(request, signal);
+    } finally {
+      // Transfer the slot directly to the oldest waiting read.
+      const next = waitingReaders.shift();
+      if (next) next();
+      else activeReads--;
+    }
+  };
+
+  const enqueueReply = (
+    run: () => Promise<JsonRpcResponse | undefined> | JsonRpcResponse,
+    read?: { id: RequestId; signal: AbortSignal },
+  ) => {
+    pending++;
+    const flush = async () => {
+      try {
+        const response = await run();
+        if (response && !read?.signal.aborted) await send(response);
+      } finally {
+        if (read) cancellableReads.delete(read.id);
+        pending--;
+      }
+    };
+    replies = replies.then(flush, flush);
+  };
+
   const dispatch = ((line: string): void => {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+    const parsed = parseLine(trimmed, maxLineBytes);
+    const request = "request" in parsed ? parsed.request : undefined;
+    if (
+      request?.jsonrpc === "2.0" &&
+      request.id === undefined &&
+      typeof request.method === "string"
+    ) {
+      // Notifications use no queue slot and never emit a reply.
+      if (request.method === "notifications/cancelled") {
+        const id = cancelledRequestId(request.params);
+        if (id !== null) cancellableReads.get(id)?.abort();
+      }
+      return;
+    }
+
+    const id = requestId(request?.id);
     if (pending >= maxPendingRequests) {
-      // Refuse instead of queueing. An unbounded queue turns a slow handler into
-      // unbounded memory, and the caller would wait the same amount of time for
-      // a reply it can already predict.
-      void respond(
-        errorResponse(idOfLine(line), -32000, "Server busy", {
+      void send(
+        errorResponse(id, -32000, "Server busy", {
           code: "QUEUE_OVERFLOW",
           maxPendingRequests,
         }),
       );
       return;
     }
-    pending += 1;
-    const run = () =>
-      execute(line).finally(() => {
-        pending -= 1;
-      });
-    // A failed line must not poison the queue for the rest of the session.
-    queue = queue.then(run, run);
+
+    if (
+      request &&
+      id !== null &&
+      !cancellableReads.has(id) &&
+      options.isReadOnlyRequest?.(request)
+    ) {
+      const controller = new AbortController();
+      cancellableReads.set(id, controller);
+      const { signal } = controller;
+      const run = () => executeRead(request, signal);
+      const result = serialBarrier.then(run, run);
+      enqueueReply(() => result, { id, signal });
+    } else {
+      enqueueReply(() =>
+        "error" in parsed ? parsed.error : execute(parsed.request),
+      );
+      serialBarrier = replies;
+    }
   }) as StdioDispatcher;
-  dispatch.drain = () => queue;
+  dispatch.drain = () => replies;
   return dispatch;
 };

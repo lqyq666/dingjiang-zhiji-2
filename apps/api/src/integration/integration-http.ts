@@ -26,8 +26,13 @@ import { GovernedCommandFailure } from "../command-kernel/governed-command-kerne
 import { governedCommandHttpError } from "../command-kernel/governed-command-http";
 import { isProduction } from "../runtime-config";
 import { productionWritesEnabled } from "../production-write-policy";
-import { RateLimitExceeded, RateLimitService } from "./rate-limit.service";
+import {
+  RateLimitExceeded,
+  RateLimitService,
+  type RateLimitActor,
+} from "./rate-limit.service";
 import { IdentityService } from "../identity/identity.service";
+import { requireIntegrationTenant } from "./integration-access";
 
 export type IntegrationRequest = {
   method?: string;
@@ -168,14 +173,15 @@ export class IntegrationAuthGuard implements CanActivate {
           "生产业务写入尚未通过验收，当前只读",
         );
       request.integrationPrincipal = principal;
-      await this.enforceRateLimit(context, principal, method);
+      await this.enforceRateLimit(principal, method);
       return true;
     }
     const principal = principalForToken(actual);
     if (!actual || !principal)
       throw new UnauthorizedException("Integration API 访问令牌无效");
+    requireIntegrationTenant(principal.tenantId);
     request.integrationPrincipal = principal;
-    await this.enforceRateLimit(context, principal, method);
+    await this.enforceRateLimit(principal, method);
     return true;
   }
 
@@ -184,24 +190,14 @@ export class IntegrationAuthGuard implements CanActivate {
    * credential to charge, and it already fails at the guard above.
    */
   private async enforceRateLimit(
-    context: ExecutionContext,
-    actor: { tenantId: string; subjectId: string; credentialId?: string },
+    actor: RateLimitActor,
     method: string,
   ): Promise<void> {
     if (!this.rateLimits) return;
     // On by default; an operator can set DINGJIANG_RATE_LIMIT_ENABLED=0 to
     // shed the ceiling during an incident, but silence is not the default.
     if (process.env.DINGJIANG_RATE_LIMIT_ENABLED === "0") return;
-    try {
-      await this.rateLimits.assertWithinLimit(actor, method);
-    } catch (error) {
-      if (error instanceof RateLimitExceeded)
-        context
-          .switchToHttp()
-          .getResponse()
-          .setHeader("Retry-After", String(error.retryAfterSeconds));
-      throw error;
-    }
+    await this.rateLimits.assertWithinLimit(actor, method);
   }
 }
 
@@ -300,8 +296,6 @@ export class IntegrationExceptionFilter implements ExceptionFilter {
     const request = http.getRequest<IntegrationRequest>();
     const response = http.getResponse<IntegrationResponse>();
     const mapped = errorFor(exception);
-    // The guard sets this too, but a 429 can also come from a later layer;
-    // repeating it here keeps the header on every rate-limited response.
     if (exception instanceof RateLimitExceeded)
       response.setHeader("Retry-After", String(exception.retryAfterSeconds));
     response.status(mapped.status).json({
