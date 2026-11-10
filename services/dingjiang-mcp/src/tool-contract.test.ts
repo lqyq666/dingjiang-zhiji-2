@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -75,6 +77,39 @@ const declaresGovernedWriteEnvelope = (tool: ToolDescriptor): boolean => {
     required.includes("expectedVersion")
   );
 };
+
+describe("agent eval task set", () => {
+  const { tasks } = JSON.parse(
+    readFileSync(join(process.cwd(), "evals/agent/tasks.json"), "utf8"),
+  ) as {
+    tasks: Array<{
+      id: string;
+      identity: string;
+      prompt: string;
+      expect: { tools: string[]; success: string };
+    }>;
+  };
+
+  it("keeps 30 unique tasks that only reference declared tools", () => {
+    expect(tasks).toHaveLength(30);
+    expect(new Set(tasks.map((task) => task.id)).size).toBe(30);
+    for (const task of tasks) {
+      expect(task.prompt.trim().length, `${task.id} 缺 prompt`).toBeGreaterThan(
+        0,
+      );
+      expect(
+        task.expect.success.trim().length,
+        `${task.id} 缺判定标准`,
+      ).toBeGreaterThan(0);
+      // A renamed or removed tool must fail here, not in a manual run.
+      for (const tool of task.expect.tools)
+        expect(
+          dispatchedToolNames.has(tool),
+          `${task.id} 引用了未声明的工具 ${tool}`,
+        ).toBe(true);
+    }
+  });
+});
 
 describe("MCP tool contract drift guard", () => {
   it("declares and implements exactly the same tool names", () => {
