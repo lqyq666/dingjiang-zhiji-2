@@ -24,7 +24,7 @@ flowchart TD
 
 ## 运行 MCP 演示
 
-在有 Node.js 22.19+、pnpm 11 和本机 Docker 的环境中运行
+在 Node.js 24、pnpm 11.19.0 和本机 Docker 的环境中运行
 
 ```bash
 pnpm install --frozen-lockfile
@@ -33,7 +33,7 @@ pnpm demo:mcp
 
 命令使用合成订单和临时 PostgreSQL，运行实际的 stdio 和 OAuth Streamable HTTP 链路。终端会打印项目与证据来源、只读拦截、授权提交、幂等回执和进度回读。临时数据库和测试进程随回放结束清理。 [远程 MCP 接入](services/dingjiang-mcp/README.md#远程接入)
 
-[演示步骤与录屏顺序](docs/demo/mcp-workspace-demo.md) · [连接 MCP 宿主](services/dingjiang-mcp/README.md) · [全栈本地启动](#本地启动)
+[固定展示版、录制顺序与真人试用](docs/demo/mcp-workspace-demo.md#作品展示版) · [连接 MCP 宿主](services/dingjiang-mcp/README.md) · [全栈本地启动](#本地启动)
 
 ## 技术速览
 
