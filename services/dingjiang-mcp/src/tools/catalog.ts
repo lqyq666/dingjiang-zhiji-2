@@ -132,7 +132,7 @@ const operationTools: ToolSeed[] = [
   {
     name: "work.operations",
     description:
-      '读取项目操作版本与获准动作。记录进展时用 responseFormat: "compact" 查候选事项和状态指纹。回读时同时传 workItemId，只取该事项最新进展与版本。其他动作使用完整返回。',
+      '读取项目操作版本与获准动作。用户只给事项名称时，先从 workspace.events 获取授权项目，在可能匹配的项目查找。多处同名时先请用户选择项目。记录进展时用 responseFormat: "compact" 查候选事项和状态指纹。回读时同时传 workItemId，只取该事项最新进展与版本。其他动作使用完整返回。',
     inputSchema: z.toJSONSchema(workOperationsInput, { io: "input" }),
   },
   {
