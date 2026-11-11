@@ -1,6 +1,7 @@
 import { validateIntegrationBaseUrl } from "./endpoint-policy";
 import {
   workExecutionContextSchema,
+  workProgressReadbackSchema,
   governedCommandResultSchema,
   materialVerificationResultSchema,
   evidenceConfirmationResultSchema,
@@ -440,6 +441,13 @@ export class DingjiangIntegrationClient {
     return this.get(
       `integration/projects/${encodeURIComponent(projectId)}/operations`,
       workExecutionContextSchema,
+    );
+  }
+  getProgressReadback(projectId: string, workItemId: string) {
+    const query = new URLSearchParams({ workItemId });
+    return this.get(
+      `integration/projects/${encodeURIComponent(projectId)}/operations?${query}`,
+      workProgressReadbackSchema,
     );
   }
   executeWork(projectId: string, request: WorkExecutionRequest) {

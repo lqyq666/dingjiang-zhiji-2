@@ -2,6 +2,8 @@ import { z } from "zod";
 import {
   workExecutionRequestSchema,
   workExecutionContextSchema,
+  workProgressItemSchema,
+  workProgressReadbackSchema,
   materialVerificationPayloadSchema,
   materialVerificationResultSchema,
   evidenceConfirmationPayloadSchema,
@@ -95,8 +97,42 @@ export const evidenceProposeInput = z
   })
   .strict();
 
-export const workExecuteInput = workExecutionRequestSchema.safeExtend({
-  projectId: z.string().trim().min(1).max(120),
+const responseFormat = z.enum(["full", "compact"]).optional();
+
+export const workOperationsInput = identifierInput
+  .extend({
+    responseFormat,
+    workItemId: z.string().trim().min(1).max(160).optional(),
+  })
+  .refine(
+    ({ responseFormat, workItemId }) =>
+      !workItemId || responseFormat === "compact",
+  );
+
+export const workExecuteInput = workExecutionRequestSchema
+  .safeExtend({ projectId: identifierInput.shape.projectId, responseFormat })
+  .refine(
+    ({ responseFormat, payload }) =>
+      responseFormat !== "compact" ||
+      payload.operation.action === "progress.record",
+  );
+
+export const compactProgressContextSchema = z.strictObject({
+  responseFormat: z.literal("compact"),
+  projectId: identifierInput.shape.projectId,
+  projectName: z.string().nullable(),
+  version: workExecutionContextSchema.shape.version,
+  stateFingerprint: workExecutionContextSchema.shape.stateFingerprint,
+  allowedActions: z.array(z.literal("progress.record")).max(1),
+  approvalRequiredActions: z.array(z.literal("progress.record")).max(1),
+  items: z.array(workProgressItemSchema),
+});
+
+export const compactProgressReceiptDataSchema = z.strictObject({
+  responseFormat: z.literal("compact"),
+  projectId: identifierInput.shape.projectId,
+  action: z.literal("progress.record"),
+  item: workProgressItemSchema.nullable(),
 });
 export const materialVerifyInput = z
   .object({
@@ -134,7 +170,11 @@ export const aggregateOutputFor = (name: string): z.ZodType | undefined =>
  */
 const outputContractSchemas: Record<string, z.ZodType> = {
   "workspace.events": integrationEventsSchema,
-  "work.operations": workExecutionContextSchema,
+  "work.operations": z.union([
+    workExecutionContextSchema,
+    compactProgressContextSchema,
+    workProgressReadbackSchema,
+  ]),
   "work.execute": governedCommandResultSchema,
   "material.verify": materialVerificationResultSchema,
   "evidence.confirm": evidenceConfirmationResultSchema,
@@ -167,7 +207,7 @@ export const outputSchemaFor = (name: string): JsonSchemaObject | undefined => {
   // `io: "output"` describes what the server emits rather than what it accepts:
   // an input-oriented schema would advertise defaulted fields as optional and
   // let a client validate against a shape this server never returns.
-  return z.toJSONSchema(schema, { io: "output" }) as JsonSchemaObject;
+  return { type: "object", ...z.toJSONSchema(schema, { io: "output" }) };
 };
 
 /** Number of tools that declare an output contract; asserted by the tests. */

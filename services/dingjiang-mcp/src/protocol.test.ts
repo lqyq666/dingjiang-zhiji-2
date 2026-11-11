@@ -255,6 +255,7 @@ const client = (): IntegrationClient => ({
   getExecutionContext: vi
     .fn()
     .mockResolvedValue({ version: 0, allowedActions: [] }),
+  getProgressReadback: vi.fn(),
   executeWork: vi.fn().mockResolvedValue({ version: 1, replayed: false }),
   verifyMaterial: vi.fn().mockResolvedValue({ version: 1 }),
   confirmEvidence: vi.fn().mockResolvedValue({ version: 1 }),

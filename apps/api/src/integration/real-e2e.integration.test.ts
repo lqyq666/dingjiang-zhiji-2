@@ -13,6 +13,7 @@ import {
   integrationWorkContextSchema,
   integrationWorkspaceResumeSchema,
   workExecutionContextSchema,
+  workProgressReadbackSchema,
 } from "@dingjiang/contracts";
 import type { Pool } from "pg";
 import { createTestPool } from "../testing/test-pool";
@@ -97,7 +98,6 @@ class McpProcess {
       const response = JSON.parse(trimmed) as JsonRpcResponse;
       const id = String(response.id);
       this.pending.get(id)?.(response);
-      this.pending.delete(id);
     });
   }
 
@@ -112,18 +112,24 @@ class McpProcess {
   ): Promise<JsonRpcResponse> {
     const id = randomUUID();
     const settled = new Promise<JsonRpcResponse>((resolvePromise, reject) => {
-      const timer = setTimeout(
-        () => reject(new Error(`timeout waiting for ${method}`)),
-        timeoutMs,
-      );
-      this.pending.set(id, (value) => {
+      const cleanup = () => {
         clearTimeout(timer);
+        this.pending.delete(id);
+        this.child.off("exit", onExit);
+      };
+      const onExit = (code: number | null) => {
+        cleanup();
+        reject(new Error(`MCP exited with ${code} during ${method}`));
+      };
+      const timer = setTimeout(() => {
+        cleanup();
+        reject(new Error(`timeout waiting for ${method}`));
+      }, timeoutMs);
+      this.pending.set(id, (value) => {
+        cleanup();
         resolvePromise(value);
       });
-      this.child.once("exit", (code) => {
-        clearTimeout(timer);
-        reject(new Error(`MCP exited with ${code} during ${method}`));
-      });
+      this.child.once("exit", onExit);
     });
     const wireParams = this.options.modern
       ? { ...params, _meta: modernMeta }
@@ -141,6 +147,8 @@ class McpProcess {
     data?: Record<string, unknown>;
     failure?: Record<string, unknown>;
     isError: boolean;
+    textBytes: number;
+    resultBytes: number;
   }> {
     const response = await this.request("tools/call", {
       name,
@@ -159,9 +167,13 @@ class McpProcess {
     >;
     const isError = Boolean(result.isError);
     if (isError) expect(result).not.toHaveProperty("structuredContent");
+    const sizes = {
+      textBytes: Buffer.byteLength(result.content[0]!.text, "utf8"),
+      resultBytes: Buffer.byteLength(JSON.stringify(result), "utf8"),
+    };
     return isError
-      ? { failure: payload, isError }
-      : { data: result.structuredContent, isError };
+      ? { failure: payload, isError, ...sizes }
+      : { data: result.structuredContent, isError, ...sizes };
   }
 
   async stop(): Promise<void> {
@@ -675,6 +687,135 @@ describe.skipIf(!run)(
       });
     });
 
+    it("keeps progress compact across snapshot, receipt and single-item readback", async () => {
+      const fullBefore = await mcp.call("work.operations", { projectId });
+      const state = workExecutionContextSchema.parse(fullBefore.data);
+      const format = { projectId, responseFormat: "compact" };
+      const compactBefore = await mcp.call("work.operations", format);
+      expect(compactBefore.data).toMatchObject({
+        responseFormat: "compact",
+        projectId,
+        version: state.version,
+        stateFingerprint: state.stateFingerprint,
+        allowedActions: ["progress.record"],
+        items: expect.arrayContaining([
+          expect.objectContaining({ id: workItemId }),
+        ]),
+      });
+      expect(compactBefore.data).not.toHaveProperty("project");
+
+      const note = "已复核合成工时记录。";
+      const command = {
+        projectId,
+        requestId: randomUUID(),
+        correlationId: randomUUID(),
+        expectedVersion: state.version,
+        reason: "精简进展返回回归",
+        payload: {
+          confirmation: "确认在合成演示库记录本条进展",
+          stateFingerprint: state.stateFingerprint,
+          operation: { action: "progress.record", workItemId, note },
+        },
+      };
+      const args = { ...command, responseFormat: "compact" };
+      expect((await readOnlyMcp.call("work.execute", args)).failure?.code).toBe(
+        "PERMISSION_DENIED",
+      );
+      const written = await mcp.call("work.execute", args);
+      expect(written.data).toMatchObject({
+        requestId: command.requestId,
+        version: state.version + 1,
+        replayed: false,
+        data: {
+          responseFormat: "compact",
+          projectId,
+          action: "progress.record",
+          item: { id: workItemId, progressUpdate: { note } },
+        },
+      });
+      expect(written.data).not.toHaveProperty("data.project");
+
+      const fullReplay = await mcp.call("work.execute", command);
+      const compactReplay = await mcp.call("work.execute", args);
+      for (const replay of [fullReplay, compactReplay]) {
+        expect(replay.data).toMatchObject({
+          requestId: command.requestId,
+          version: state.version + 1,
+          replayed: true,
+        });
+      }
+      expect(fullReplay.data).toHaveProperty("data.project.phases");
+      const fullAfter = await mcp.call("work.operations", { projectId });
+      const readback = await mcp.call("work.operations", {
+        ...format,
+        workItemId,
+      });
+      const readOnlyReadback = await readOnlyMcp.call("work.operations", {
+        ...format,
+        workItemId,
+      });
+      expect(readOnlyReadback.data).toEqual(readback.data);
+      expect(readback.data).toMatchObject({
+        responseFormat: "compact",
+        version: state.version + 1,
+        item: { id: workItemId, progressUpdate: { note } },
+      });
+      expect(readback.data).not.toHaveProperty("stateFingerprint");
+      const current = workExecutionContextSchema.parse(fullAfter.data);
+      const phase = current.project?.phases.find((stage) =>
+        stage.tasks.some((item) => item.id === workItemId),
+      );
+      const latest = phase?.tasks.find((item) => item.id === workItemId);
+      expect(readback.data?.item).toEqual({
+        id: workItemId,
+        title: latest?.title,
+        status: latest?.status,
+        progressUpdate: latest?.progressUpdate,
+        phaseCode: phase?.code,
+        phaseName: phase?.name,
+      });
+
+      const hidden = await pool.query<{ id: string }>(
+        `SELECT s.id FROM vs01_project_subtasks s JOIN vs01_project_nodes n ON n.id = s.node_id
+          WHERE n.project_id = $1 AND s.owner = 'OWNER' LIMIT 1`,
+        [projectId],
+      );
+      expect(hidden.rows[0]).toBeDefined();
+      for (const itemId of ["UNKNOWN-ITEM", hidden.rows[0]!.id]) {
+        expect(
+          (await mcp.call("work.operations", { ...format, workItemId: itemId }))
+            .failure?.code,
+        ).toBe("NOT_FOUND");
+      }
+
+      const receipts = await pool.query(
+        "SELECT response FROM governed_command_receipts WHERE request_id = $1",
+        [command.requestId],
+      );
+      expect(receipts.rowCount).toBe(1);
+      expect(receipts.rows[0].response).toHaveProperty("project");
+      expect(receipts.rows[0].response).not.toHaveProperty("responseFormat");
+
+      const full = [fullBefore, fullReplay, fullAfter];
+      const compact = [compactBefore, compactReplay, readback];
+      const sum = (results: typeof full, field: "textBytes" | "resultBytes") =>
+        results.reduce((total, result) => total + result[field], 0);
+      const fullText = sum(full, "textBytes");
+      const compactText = sum(compact, "textBytes");
+      expect(compactText).toBeLessThanOrEqual(fullText * 0.7);
+      record("同项目进展返回体积对照", {
+        写前文本字节: `${fullBefore.textBytes} → ${compactBefore.textBytes}`,
+        回执文本字节: `${fullReplay.textBytes} → ${compactReplay.textBytes}`,
+        回读文本字节: `${fullAfter.textBytes} → ${readback.textBytes}`,
+        完整文本字节: fullText,
+        精简文本字节: compactText,
+        文本减少百分比: Math.round((1 - compactText / fullText) * 100),
+        完整结果字节: sum(full, "resultBytes"),
+        精简结果字节: sum(compact, "resultBytes"),
+        数据库回执: receipts.rowCount ?? 0,
+      });
+    });
+
     it("validates OAuth grants, blocks read-only writes and reads the authorized receipt back", async () => {
       const httpPort = 39_000 + Math.floor(Math.random() * 3_000);
       const remoteUrl = `http://127.0.0.1:${httpPort}/mcp`;
@@ -934,6 +1075,19 @@ describe.skipIf(!run)(
             ?.progressUpdate?.note,
         ).toBe(note);
         expect(snapshot.evidence.items[0]?.sourceFile).toBe("orders.csv");
+        const progressReadback = workProgressReadbackSchema.parse(
+          (
+            await call(read, "work.operations", {
+              projectId,
+              workItemId: workItem.id,
+              responseFormat: "compact",
+            })
+          ).result?.structuredContent,
+        );
+        expect(progressReadback).toMatchObject({
+          version: state.version + 1,
+          item: { id: workItem.id, progressUpdate: { note } },
+        });
         const workContext = integrationWorkContextSchema.parse(
           (await call(read, "work.context", { projectId })).result
             ?.structuredContent,

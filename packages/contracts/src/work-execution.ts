@@ -2,6 +2,7 @@ import { z } from "zod";
 import {
   integrationProjectStageSchema,
   integrationSafeMaterialSchema,
+  integrationWorkItemSchema,
 } from "./integration";
 import { governedCommandRequestSchema } from "./governed-command";
 import {
@@ -99,5 +100,23 @@ export const workExecutionContextSchema = z.object({
   // person; it is a signal, never an authorization.
   approvalRequiredActions: z.array(z.string()).default([]),
 });
+export const workProgressItemSchema = integrationWorkItemSchema
+  .pick({
+    id: true,
+    title: true,
+    phaseCode: true,
+    phaseName: true,
+    status: true,
+    progressUpdate: true,
+  })
+  .strict();
+
+export const workProgressReadbackSchema = z.strictObject({
+  responseFormat: z.literal("compact"),
+  projectId: id,
+  version: workExecutionContextSchema.shape.version,
+  item: workProgressItemSchema,
+});
+
 export type WorkAction = z.infer<typeof workActionSchema>;
 export type WorkExecutionRequest = z.infer<typeof workExecutionRequestSchema>;

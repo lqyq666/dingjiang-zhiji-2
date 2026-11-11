@@ -206,6 +206,14 @@ const run =
       operationContext.project?.phases.flatMap((phase) => phase.tasks),
     ).toEqual([]);
     expect(operationContext.project?.node.subtasks).toEqual([]);
+    const progress = await fetch(
+      `${url}/operations?workItemId=SUB-SOLUTION-001`,
+      { headers },
+    );
+    expect(progress.status).toBe(403);
+    expect(await progress.json()).toMatchObject({
+      error: { code: "FORBIDDEN" },
+    });
     expect(
       operationContext.project?.auditTrail.every(
         (item) => Object.keys(item.snapshot).length === 0,

@@ -49,14 +49,14 @@ export class IntegrationController {
   async executionContext(
     @Param("id") id: string,
     @Req() request: IntegrationRequest,
+    @Query("workItemId") workItemId?: unknown,
   ) {
-    return this.success(
-      request,
-      await this.integration.executionContext(
-        integrationPrincipal(request),
-        id,
-      ),
-    );
+    const principal = integrationPrincipal(request);
+    const data =
+      workItemId === undefined
+        ? await this.integration.executionContext(principal, id)
+        : await this.integration.progressReadback(principal, id, workItemId);
+    return this.success(request, data);
   }
 
   @Post("projects/:id/operations")

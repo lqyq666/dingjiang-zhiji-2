@@ -28,6 +28,7 @@ import {
   integrationWorkspaceResumeSchema,
   projectSchema,
   workExecutionContextSchema,
+  workProgressReadbackSchema,
   type EvidenceProposalReview,
   type IntegrationPrincipal,
   type IntegrationScope,
@@ -157,6 +158,21 @@ export class IntegrationService {
       sourceTask:
         sourceTask && scopedExecutionSourceTask(principal, sourceTask),
     });
+  }
+
+  async progressReadback(
+    principal: IntegrationPrincipal,
+    projectId: string,
+    workItemId: unknown,
+  ) {
+    requireScope(principal, "project:read");
+    requireScope(principal, "workitem:read");
+    requireProjectAccess(principal, projectId);
+    const id =
+      workProgressReadbackSchema.shape.item.shape.id.safeParse(workItemId);
+    if (!id.success) throw new BadRequestException("事项编号无效");
+    if (!this.workExecution) throw new BadRequestException("操作上下文不可用");
+    return this.workExecution.progressReadback(principal, projectId, id.data);
   }
 
   async executeWork(

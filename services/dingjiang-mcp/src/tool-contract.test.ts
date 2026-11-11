@@ -217,11 +217,17 @@ describe("MCP tool output contracts", () => {
     for (const tool of allTools) {
       if (!tool.outputSchema) continue;
       expect(tool.outputSchema.type).toBe("object");
-      const properties = tool.outputSchema.properties;
-      expect(typeof properties).toBe("object");
-      expect(Object.keys(properties as object).length).toBeGreaterThan(0);
-      // A contract that admits anything validates nothing.
-      expect(tool.outputSchema.additionalProperties).toBe(false);
+      const variants = Array.isArray(tool.outputSchema.anyOf)
+        ? (tool.outputSchema.anyOf as NonNullable<
+            ToolDescriptor["outputSchema"]
+          >[])
+        : [tool.outputSchema];
+      for (const variant of variants) {
+        const properties = variant.properties;
+        expect(typeof properties).toBe("object");
+        expect(Object.keys(properties as object).length).toBeGreaterThan(0);
+        expect(variant.additionalProperties).toBe(false);
+      }
     }
   });
 });

@@ -2,10 +2,10 @@ import { z } from "zod";
 import {
   emptyInput,
   evidenceConfirmInput,
-  identifierInput,
   materialVerifyInput,
   outputSchemaFor,
   workExecuteInput,
+  workOperationsInput,
   type JsonSchemaObject,
 } from "./schemas";
 
@@ -132,13 +132,13 @@ const operationTools: ToolSeed[] = [
   {
     name: "work.operations",
     description:
-      "读取项目最新事实、操作版本与当前身份获准的动作。执行前必读；allowedActions 代表权限，实际执行仍检查阶段和完成条件。",
-    inputSchema: z.toJSONSchema(identifierInput),
+      '读取项目操作版本与获准动作。记录进展时用 responseFormat: "compact" 查候选事项和状态指纹。回读时同时传 workItemId，只取该事项最新进展与版本。其他动作使用完整返回。',
+    inputSchema: z.toJSONSchema(workOperationsInput, { io: "input" }),
   },
   {
     name: "work.execute",
     description:
-      '记录进展或执行经用户确认的治理动作。进展的 payload.operation 格式为 {"action":"progress.record","workItemId":"实际事项 ID","note":"进展内容"}。新命令先读 work.operations，用 version 填 expectedVersion，完整复制 stateFingerprint。展示影响并用用户原话填 confirmation。requestId 和 correlationId 必须为 UUID。成功后回读核对。结果未知时先核对，重放用完整原命令，保留所有字段和值。方案定稿仅 OWNER、经验发布仅 EXPERT_REVIEWER。',
+      '记录进展或执行经用户确认的治理动作。进展的 payload.operation 格式为 {"action":"progress.record","workItemId":"实际事项 ID","note":"进展内容"}。新命令先读 work.operations，用 version 填 expectedVersion，完整复制 stateFingerprint。展示影响并用用户原话填 confirmation。requestId 和 correlationId 必须为 UUID。记录进展可用 responseFormat: "compact" 获取精简回执，成功后按事项回读。结果未知时先核对，重放用完整原命令，保留所有字段和值。方案定稿仅 OWNER、经验发布仅 EXPERT_REVIEWER。',
     inputSchema: z.toJSONSchema(workExecuteInput, { io: "input" }),
   },
   {

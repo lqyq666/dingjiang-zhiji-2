@@ -12,6 +12,7 @@ import { requiresHumanApproval } from "../command-kernel/production-authorizatio
 import {
   workExecutionRequestSchema,
   workExecutionPayloadSchema,
+  workProgressReadbackSchema,
   type IntegrationPrincipal,
   type Project,
   type TaskDetail,
@@ -26,9 +27,13 @@ import { Vs01Service } from "../vs01.service";
 import { RootCauseWorkpaperService } from "../workpapers/root-cause-workpaper.service";
 import { createPool } from "../vs01-db";
 import { isProduction } from "../runtime-config";
+import { workStageNames } from "../work-stages";
 import { sourceTaskFromReservation } from "../projects/production-lifecycle";
 import { FeishuWorkNotifier } from "./feishu-work.notifier";
 import { hasProjectAccess } from "./integration-access";
+
+const revisionQuery =
+  "SELECT count(*)::int AS revision FROM governed_command_receipts WHERE tenant_id = $1 AND project_id = $2 AND command_name = 'work.execute'";
 
 const fingerprint = (project: Project | TaskDetail) =>
   createHash("sha256").update(JSON.stringify(project)).digest("hex");
@@ -80,10 +85,7 @@ export class WorkExecutionService implements OnModuleDestroy {
     tenantId: string,
     projectId: string,
   ) {
-    const result = await client.query(
-      "SELECT count(*)::int AS revision FROM governed_command_receipts WHERE tenant_id = $1 AND project_id = $2 AND command_name = 'work.execute'",
-      [tenantId, projectId],
-    );
+    const result = await client.query(revisionQuery, [tenantId, projectId]);
     return Number(result.rows[0]?.revision ?? 0);
   }
 
@@ -202,6 +204,55 @@ export class WorkExecutionService implements OnModuleDestroy {
     } finally {
       client.release();
     }
+  }
+
+  async progressReadback(
+    principal: IntegrationPrincipal,
+    projectId: string,
+    workItemId: string,
+  ) {
+    const result = await this.pool.query<{
+      id: string;
+      title: string;
+      phase_code: keyof typeof workStageNames;
+      status: string;
+      progress_note: string | null;
+      progress_output_reference: string | null;
+      progress_updated_at: Date | null;
+      version: number;
+    }>(
+      `SELECT s.id, s.title, s.phase_code, s.status,
+              s.progress_note, s.progress_output_reference, s.progress_updated_at,
+              (${revisionQuery}) AS version
+         FROM vs01_project_nodes n
+         JOIN vs01_project_subtasks s ON s.node_id = n.id AND s.tenant_id = n.tenant_id
+         JOIN vs01_project_phases phase ON phase.project_id = n.project_id
+           AND phase.tenant_id = n.tenant_id AND phase.code = s.phase_code
+        WHERE n.tenant_id = $1 AND n.project_id = $2 AND s.id = $3 AND s.owner = $4`,
+      [principal.tenantId, projectId, workItemId, principal.role],
+    );
+    const item = result.rows[0];
+    if (!item) throw new NotFoundException("授权范围内未找到该事项");
+    return workProgressReadbackSchema.parse({
+      responseFormat: "compact",
+      projectId,
+      version: item.version,
+      item: {
+        id: item.id,
+        title: item.title,
+        phaseCode: item.phase_code,
+        phaseName: workStageNames[item.phase_code],
+        status: item.status,
+        progressUpdate: item.progress_updated_at
+          ? {
+              note: String(item.progress_note),
+              outputReference: item.progress_output_reference,
+              updatedBy: "PMC",
+              updatedAt: item.progress_updated_at.toISOString(),
+            }
+          : null,
+      },
+    });
   }
 
   async execute(

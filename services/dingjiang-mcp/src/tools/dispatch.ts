@@ -6,6 +6,8 @@ import {
   workpaperProposeRequestSchema,
   materialCreateRequestSchema,
   evidenceProposeRequestSchema,
+  integrationExecutionProjectSchema,
+  type Project,
 } from "@dingjiang/contracts";
 import {
   IntegrationClientError,
@@ -14,6 +16,8 @@ import {
 } from "../client";
 import {
   aggregateOutputFor,
+  compactProgressContextSchema,
+  compactProgressReceiptDataSchema,
   emptyInput,
   evidenceConfirmInput,
   evidenceInput,
@@ -26,6 +30,7 @@ import {
   searchInput,
   sourceVersionInput,
   workExecuteInput,
+  workOperationsInput,
   workpaperProposeInput,
 } from "./schemas";
 
@@ -33,6 +38,7 @@ export type IntegrationClient = Pick<
   DingjiangIntegrationClient,
   | "listEvents"
   | "getExecutionContext"
+  | "getProgressReadback"
   | "executeWork"
   | "verifyMaterial"
   | "confirmEvidence"
@@ -136,21 +142,77 @@ type ToolHandler = (
   input: unknown,
 ) => Promise<unknown>;
 
+const progressItems = (project: Pick<Project, "phases"> | null) =>
+  project?.phases.flatMap((phase) =>
+    phase.tasks.map((item) => ({
+      id: item.id,
+      title: item.title,
+      phaseCode: phase.code,
+      phaseName: phase.name,
+      status: item.status,
+      progressUpdate: item.progressUpdate,
+    })),
+  ) ?? [];
+
 const workHandlers: Record<string, ToolHandler> = {
   "workspace.events": async (client, input) => {
     emptyInput.parse(input);
     return client.listEvents();
   },
   "work.operations": async (client, input) => {
-    const body = identifierInput.parse(input);
-    return client.getExecutionContext(body.projectId);
+    const { projectId, responseFormat, workItemId } =
+      workOperationsInput.parse(input);
+    if (workItemId) return client.getProgressReadback(projectId, workItemId);
+    const context = await client.getExecutionContext(projectId);
+    if (responseFormat !== "compact") return context;
+    return compactProgressContextSchema.parse({
+      responseFormat,
+      projectId,
+      projectName: context.project?.name ?? null,
+      version: context.version,
+      stateFingerprint: context.stateFingerprint,
+      allowedActions: context.allowedActions.filter(
+        (action) => action === "progress.record",
+      ),
+      approvalRequiredActions: context.approvalRequiredActions.filter(
+        (action) => action === "progress.record",
+      ),
+      items: progressItems(context.project).filter(
+        (item) => item.status !== "DONE" && item.status !== "LOCKED",
+      ),
+    });
   },
   "work.execute": async (client, input) => {
-    const { projectId, ...request } = workExecuteInput.parse(input);
-    return client.executeWork(
+    const { projectId, responseFormat, ...request } =
+      workExecuteInput.parse(input);
+    const result = await client.executeWork(
       projectId,
       workExecutionRequestSchema.parse(request),
     );
+    const operation = request.payload.operation;
+    if (responseFormat !== "compact" || operation.action !== "progress.record")
+      return result;
+    const project = integrationExecutionProjectSchema.safeParse(
+      result.data.project,
+    );
+    if (!project.success)
+      throw new IntegrationTransportError(
+        "INTEGRATION_INVALID_RESPONSE",
+        "进展回执缺少有效的项目数据",
+        { correlationId: result.correlationId },
+      );
+    return {
+      ...result,
+      data: compactProgressReceiptDataSchema.parse({
+        responseFormat,
+        projectId,
+        action: operation.action,
+        item:
+          progressItems(project.data).find(
+            (item) => item.id === operation.workItemId,
+          ) ?? null,
+      }),
+    };
   },
   "workspace.resume": async (client, input) => {
     emptyInput.parse(input);
