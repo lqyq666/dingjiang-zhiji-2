@@ -1,4 +1,5 @@
-import { execFile } from "node:child_process";
+import { execFile, fork } from "node:child_process";
+import { once } from "node:events";
 import { randomUUID } from "node:crypto";
 import { mkdtemp, readFile, rm, rmdir, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
@@ -12,6 +13,8 @@ const root = fileURLToPath(new URL("../../", import.meta.url));
 const apiDir = join(root, "apps/api");
 const { Client } = createRequire(join(apiDir, "package.json"))("pg");
 const exec = promisify(execFile);
+const args = process.argv.slice(2);
+const hostDemo = args.includes("--agent") || args.includes("--workbuddy");
 const password = randomUUID();
 const dockerEnv = Object.fromEntries(
   Object.entries(process.env).filter(
@@ -103,6 +106,44 @@ const runDemo = async (signal) => {
     const databaseUrl =
       "postgres://dingjiang:" + password + "@127.0.0.1:" + port + "/dingjiang";
     await waitForPostgres(databaseUrl, signal);
+    if (hostDemo) {
+      const worker = fork(join(root, "scripts/demo/mcp-agent.mjs"), args, {
+        cwd: directory,
+        env: {
+          PATH: process.env.PATH ?? process.env.Path,
+          SystemRoot: process.env.SystemRoot,
+          ComSpec: process.env.ComSpec,
+          USERPROFILE: process.env.USERPROFILE,
+          APPDATA: process.env.APPDATA,
+          LOCALAPPDATA: process.env.LOCALAPPDATA,
+          CODEX_HOME: process.env.CODEX_HOME,
+          VS01_FIXTURES_DIR: join(root, "fixtures/vs01"),
+          TMP: process.env.TMP,
+          TEMP: process.env.TEMP,
+          TMPDIR: process.env.TMPDIR,
+          DATABASE_URL: databaseUrl,
+          DINGJIANG_DEPLOYMENT_MODE: "demo",
+          COZE_PROVIDER_MODE: "DEMO_RULES",
+          FEISHU_PROVIDER_MODE: "DEMO_RULES",
+        },
+        stdio: ["ignore", "inherit", "inherit", "ipc"],
+        windowsHide: true,
+      });
+      const interrupt = () => {
+        if (worker.connected) worker.send("stop");
+      };
+      signal.addEventListener("abort", interrupt, { once: true });
+      if (signal.aborted) interrupt();
+      try {
+        const [exitCode] = await once(worker, "exit");
+        signal.throwIfAborted();
+        if (exitCode !== 0)
+          throw new Error("候选宿主验收结束，详情见本次运行记录。");
+      } finally {
+        signal.removeEventListener("abort", interrupt);
+      }
+      return [];
+    }
     await exec(
       process.execPath,
       [
@@ -152,12 +193,16 @@ const interrupt = () => abort.abort();
 process.once("SIGINT", interrupt);
 process.once("SIGTERM", interrupt);
 try {
+  if (args.length && !hostDemo)
+    throw new Error("可用模式为 --agent 或 --workbuddy。");
   console.log("正在运行订单延期样例，使用临时 PostgreSQL 和实际 MCP 进程。");
   const steps = await runDemo(abort.signal);
-  console.log("\n# 鼎江智绩 MCP 演示记录\n");
-  console.log(
-    "stdio / OAuth HTTP → MCP → Integration API → PostgreSQL · 本地合成样例",
-  );
+  if (steps.length) {
+    console.log("\n# 鼎江智绩 MCP 演示记录\n");
+    console.log(
+      "stdio / OAuth HTTP → MCP → Integration API → PostgreSQL · 本地合成样例",
+    );
+  }
   for (const [index, step] of steps.entries()) {
     console.log("\n" + (index + 1) + ". " + step.title);
     for (const [key, value] of Object.entries(step.result))

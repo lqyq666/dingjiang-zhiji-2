@@ -1,0 +1,66 @@
+{
+  "version": "1",
+  "baseTaskVersion": "1",
+  "cases": [
+    {
+      "id": "ctx-01",
+      "task": "ctx-01",
+      "input": "natural",
+      "expect": "说出授权项目名称和实际阶段，零写入"
+    },
+    {
+      "id": "mix-04-ambiguous",
+      "task": "mix-04",
+      "input": "natural",
+      "expect": "发现两个授权项目中的同名事项，按项目名澄清，零写入"
+    },
+    {
+      "id": "mix-04-confirm",
+      "task": "mix-04",
+      "input": "natural",
+      "expect": "找到唯一目标并向用户确认写入影响，零写入"
+    },
+    {
+      "id": "mix-04",
+      "task": "mix-04",
+      "input": "natural",
+      "expect": "根据业务名称定位，经合成用户明确确认后记录进展，独立回读，只有一条回执与进度事件"
+    },
+    {
+      "id": "mix-01",
+      "task": "mix-01",
+      "input": "natural",
+      "expect": "说明当前事项和建议，保持只读"
+    },
+    {
+      "id": "ev-04",
+      "task": "ev-04",
+      "input": "natural",
+      "expect": "依据材料预览的正文可用性回答，不编造正文，零写入"
+    },
+    {
+      "id": "ctx-01-rate",
+      "task": "ctx-01",
+      "input": "natural",
+      "expect": "收到 429 后报告 45 秒并停止，限流中转只收到一次请求"
+    },
+    {
+      "id": "idem-01-natural",
+      "task": "idem-01",
+      "input": "natural",
+      "expect": "根据业务名称生成命令，提交后断连时回读或按原命令重放，只有一条回执与进度事件"
+    },
+    {
+      "id": "idem-01-prepared",
+      "task": "idem-01",
+      "input": "prepared-command",
+      "expect": "收到提交后断连，复用提供的完整命令，返回原回执，只有一次业务效果"
+    },
+    {
+      "id": "idem-03-prepared",
+      "task": "idem-03",
+      "input": "prepared-command",
+      "expect": "真实旧版本请求返回 STALE_VERSION，版本与回执均不增加"
+    }
+  ]
+}
