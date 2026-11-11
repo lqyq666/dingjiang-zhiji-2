@@ -250,6 +250,23 @@ const workspaceFixture = {
   nextAction: nextActionFixture,
 };
 
+const progressRequestFixture = {
+  requestId: "10000000-0000-4000-8000-000000000001",
+  correlationId: "20000000-0000-4000-8000-000000000001",
+  expectedVersion: 0,
+  reason: "按用户要求记录进展",
+  payload: {
+    stateFingerprint: "a".repeat(64),
+    confirmation: "请记录本次处理进展",
+    operation: {
+      action: "progress.record",
+      workItemId: "WI-1",
+      note: "已核对原始记录",
+      outputReference: "",
+    },
+  },
+};
+
 const client = (): IntegrationClient => ({
   listEvents: vi.fn().mockResolvedValue({ items: [] }),
   getExecutionContext: vi
@@ -648,21 +665,8 @@ describe("dingjiang-mcp protocol", () => {
   it("dispatches an explicit governed action and returns its receipt without retrying", async () => {
     const integration = client();
     const input = {
-      projectId: "PRJ-1",
-      requestId: "10000000-0000-4000-8000-000000000001",
-      correlationId: "20000000-0000-4000-8000-000000000001",
-      expectedVersion: 0,
-      reason: "按用户要求记录进展",
-      payload: {
-        stateFingerprint: "a".repeat(64),
-        confirmation: "请记录本次处理进展",
-        operation: {
-          action: "progress.record",
-          workItemId: "WI-1",
-          note: "已核对原始记录",
-          outputReference: "",
-        },
-      },
+      projectId: stateFixture.id,
+      ...progressRequestFixture,
     };
     const response = await createMcpHandler(integration)({
       jsonrpc: "2.0",
@@ -686,6 +690,115 @@ describe("dingjiang-mcp protocol", () => {
     });
     expect(invalid).toMatchObject({ result: { isError: true } });
     expect(integration.executeWork).toHaveBeenCalledTimes(1);
+    expect(integration.listProjects).not.toHaveBeenCalled();
+  });
+
+  it("submits progress to the sole authorized project when the model omits projectId", async () => {
+    const integration = client();
+    const response = await createMcpHandler(integration)({
+      jsonrpc: "2.0",
+      id: "unique-progress-project",
+      method: "tools/call",
+      params: { name: "work.execute", arguments: progressRequestFixture },
+    });
+    expect(response).toMatchObject({
+      result: { structuredContent: { version: 1, replayed: false } },
+    });
+    expect(integration.executeWork).toHaveBeenCalledExactlyOnceWith(
+      stateFixture.id,
+      progressRequestFixture,
+    );
+  });
+
+  it.each([
+    { scenario: "no authorized projects", ids: [] },
+    {
+      scenario: "multiple authorized projects",
+      ids: [stateFixture.id, "PRJ-2"],
+    },
+  ])("requests an explicit project with $scenario", async ({ ids }) => {
+    const integration = client();
+    const items = ids.map((id) => ({
+      ...stateFixture,
+      id,
+      status: "RUNNING" as const,
+      currentStage: null,
+      outcome: { ...stateFixture.outcome, status: "NOT_MEASURED" as const },
+    }));
+    vi.mocked(integration.listProjects).mockResolvedValue({
+      items,
+      currentProjectId: items[0]?.id ?? null,
+    });
+    const response = await createMcpHandler(integration)({
+      jsonrpc: "2.0",
+      id: "ambiguous-progress-project",
+      method: "tools/call",
+      params: { name: "work.execute", arguments: progressRequestFixture },
+    });
+    expect(response).toMatchObject({
+      result: {
+        isError: true,
+        content: [
+          {
+            text: JSON.stringify({
+              code: "INVALID_REQUEST",
+              message:
+                "省略 projectId 需要唯一授权项目。请核对授权项目并确认目标项目。",
+              correlationId: progressRequestFixture.correlationId,
+              retryable: false,
+              requiresHuman: true,
+            }),
+          },
+        ],
+      },
+    });
+    expect(integration.executeWork).not.toHaveBeenCalled();
+  });
+
+  it("requires an explicit project for governed actions other than progress", async () => {
+    const integration = client();
+    const response = await createMcpHandler(integration)({
+      jsonrpc: "2.0",
+      id: "governed-project-required",
+      method: "tools/call",
+      params: {
+        name: "work.execute",
+        arguments: {
+          ...progressRequestFixture,
+          payload: {
+            ...progressRequestFixture.payload,
+            operation: { action: "project.submit" },
+          },
+        },
+      },
+    });
+    expect(response).toMatchObject({ result: { isError: true } });
+    expect(integration.listProjects).not.toHaveBeenCalled();
+    expect(integration.executeWork).not.toHaveBeenCalled();
+  });
+
+  it("reports a failed project lookup before any write is attempted", async () => {
+    const integration = client();
+    vi.mocked(integration.listProjects).mockRejectedValue(
+      new IntegrationTransportError(
+        "INTEGRATION_NETWORK_ERROR",
+        "读取项目列表失败",
+        { correlationId: "6f1c2f7e-1111-4222-8333-444455556666" },
+      ),
+    );
+    const response = await createMcpHandler(integration)({
+      jsonrpc: "2.0",
+      id: "failed-progress-project-lookup",
+      method: "tools/call",
+      params: { name: "work.execute", arguments: progressRequestFixture },
+    });
+    expect(response).toMatchObject({
+      result: {
+        isError: true,
+        content: [{ text: expect.stringContaining("读取项目列表失败") }],
+      },
+    });
+    expect(integration.executeWork).not.toHaveBeenCalled();
   });
 
   it("reads the workspace through one Integration call", async () => {

@@ -66,7 +66,13 @@ export type IntegrationClient = Pick<
   | "proposeEvidence"
 >;
 
-const safeToolError = (error: unknown, tool: string) => {
+class ProjectSelectionRequired extends Error {
+  constructor(readonly correlationId: string) {
+    super("省略 projectId 需要唯一授权项目。请核对授权项目并确认目标项目。");
+  }
+}
+
+const safeToolError = (error: unknown) => {
   if (error instanceof IntegrationClientError) {
     const { failure, retryAfterSeconds, requestCorrelationId } = error;
     let { message } = failure.error;
@@ -90,14 +96,19 @@ const safeToolError = (error: unknown, tool: string) => {
   if (error instanceof IntegrationTransportError)
     return {
       code: error.code,
-      message:
-        tool === "work.execute" && error.code === "INTEGRATION_NETWORK_ERROR"
-          ? "写入结果未知。先用只读工具核对目标事项。确需取回回执且用户已确认时，使用相同 requestId 原样提交完整原命令。"
-          : error.message,
+      message: error.message,
       correlationId: error.correlationId,
       // Governed writes must be reconciled with the original requestId rather
       // than blindly retried, and a degraded transport needs a human to restore
       // the local service before any retry is meaningful.
+      retryable: false,
+      requiresHuman: true,
+    };
+  if (error instanceof ProjectSelectionRequired)
+    return {
+      code: "INVALID_REQUEST",
+      message: error.message,
+      correlationId: error.correlationId,
       retryable: false,
       requiresHuman: true,
     };
@@ -186,8 +197,19 @@ const workHandlers: Record<string, ToolHandler> = {
     });
   },
   "work.execute": async (client, input) => {
-    const { projectId, responseFormat, ...request } =
-      workExecuteInput.parse(input);
+    const {
+      projectId: explicitProjectId,
+      responseFormat,
+      ...request
+    } = workExecuteInput.parse(input);
+    let projectId = explicitProjectId;
+    if (projectId === undefined) {
+      const { items } = await client.listProjects();
+      const [project] = items;
+      if (!project || items.length !== 1)
+        throw new ProjectSelectionRequired(request.correlationId);
+      projectId = project.id;
+    }
     const result = await client.executeWork(
       projectId,
       workExecutionRequestSchema.parse(request),
@@ -402,6 +424,6 @@ export const callTool = async (
       requiresHuman: false,
     });
   } catch (error) {
-    return errorResult(safeToolError(error, name));
+    return errorResult(safeToolError(error));
   }
 };

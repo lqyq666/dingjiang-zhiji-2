@@ -175,6 +175,7 @@ describe("MCP tool input contracts", () => {
   it("publishes the progress command inputs without requiring its defaulted output reference", () => {
     const tool = allTools.find(({ name }) => name === "work.execute");
 
+    expect(tool?.inputSchema.required).not.toContain("projectId");
     expect(tool?.inputSchema).toMatchObject({
       properties: {
         requestId: { format: "uuid" },

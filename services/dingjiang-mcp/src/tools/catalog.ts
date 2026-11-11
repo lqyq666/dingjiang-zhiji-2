@@ -138,7 +138,7 @@ const operationTools: ToolSeed[] = [
   {
     name: "work.execute",
     description:
-      '记录进展或执行经用户确认的治理动作。进展的 payload.operation 格式为 {"action":"progress.record","workItemId":"实际事项 ID","note":"进展内容"}。新命令先读 work.operations，用 version 填 expectedVersion，原样复制 stateFingerprint。用户给出已确认的完整命令时，原样传入全部字段。写前说明目标和影响，收到明确确认后才可调用。用户只提出记录请求时，先询问确认。confirmation 填用户的确认原话。requestId 和 correlationId 必须为 UUID。记录进展可用 responseFormat: "compact" 获取精简回执，成功后按事项回读。结果未知时先核对，重放用完整原命令，保留所有字段和值。方案定稿仅 OWNER、经验发布仅 EXPERT_REVIEWER。',
+      '记录进展或执行经用户确认的治理动作。进展的 payload.operation 格式为 {"action":"progress.record","workItemId":"实际事项 ID","note":"进展内容"}。新命令先读 work.operations，用 version 填 expectedVersion，原样复制 stateFingerprint。只有一个授权项目时，记录进展请省略 projectId，由 MCP 从授权列表定位。多个项目时，明确目标后原样填写读取结果中的项目 ID。用户给出已确认的完整命令时，原样传入全部字段。写前说明目标和影响，收到明确确认后才可调用。用户只提出记录请求时，先询问确认。confirmation 填用户的确认原话。requestId 和 correlationId 必须为 UUID。记录进展可用 responseFormat: "compact" 获取精简回执，成功后按事项回读。结果未知时先核对，重放用完整原命令，保留所有字段和值。方案定稿仅 OWNER、经验发布仅 EXPERT_REVIEWER。',
     inputSchema: z.toJSONSchema(workExecuteInput, { io: "input" }),
   },
   {

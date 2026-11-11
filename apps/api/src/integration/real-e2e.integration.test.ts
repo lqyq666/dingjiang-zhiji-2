@@ -707,7 +707,6 @@ describe.skipIf(!run)(
 
       const note = "已复核合成工时记录。";
       const command = {
-        projectId,
         requestId: randomUUID(),
         correlationId: randomUUID(),
         expectedVersion: state.version,
@@ -722,6 +721,11 @@ describe.skipIf(!run)(
       expect((await readOnlyMcp.call("work.execute", args)).failure?.code).toBe(
         "PERMISSION_DENIED",
       );
+      const wrongProject = await mcp.call("work.execute", {
+        ...args,
+        projectId: "PRJ-0D-001",
+      });
+      expect(wrongProject.failure?.code).toBe("FORBIDDEN");
       const written = await mcp.call("work.execute", args);
       expect(written.data).toMatchObject({
         requestId: command.requestId,
@@ -736,7 +740,10 @@ describe.skipIf(!run)(
       });
       expect(written.data).not.toHaveProperty("data.project");
 
-      const fullReplay = await mcp.call("work.execute", command);
+      const fullReplay = await mcp.call("work.execute", {
+        ...command,
+        projectId,
+      });
       const compactReplay = await mcp.call("work.execute", args);
       for (const replay of [fullReplay, compactReplay]) {
         expect(replay.data).toMatchObject({

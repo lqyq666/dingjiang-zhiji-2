@@ -456,7 +456,18 @@ export class DingjiangIntegrationClient {
       request,
       governedCommandResultSchema,
       request.correlationId,
-    );
+    ).catch((error: unknown) => {
+      if (
+        error instanceof IntegrationTransportError &&
+        error.code === "INTEGRATION_NETWORK_ERROR"
+      )
+        throw new IntegrationTransportError(
+          error.code,
+          "写入结果未知。先用只读工具核对目标事项。确需取回回执且用户已确认时，使用相同 requestId 原样提交完整原命令。",
+          { cause: error, correlationId: error.correlationId },
+        );
+      throw error;
+    });
   }
   verifyMaterial(projectId: string, request: MaterialVerificationRequest) {
     return this.post(

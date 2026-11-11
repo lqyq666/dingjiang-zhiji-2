@@ -91,6 +91,8 @@ API 的标准业务错误保留服务端 `correlationId`。如果与请求头不
 
 `work.operations` 和 `work.execute` 默认提供完整返回。记录进展时可用 `responseFormat: "compact"`。写前查询返回候选事项、版本、状态指纹和授权提示。写入回执只包含原回执标识、版本与该事项进展。独立回读在 `work.operations` 同时传 `workItemId`，用单条 SQL 读取事项和对应版本。
 
+只有一个授权项目时，`progress.record` 可以省略 `projectId`。MCP 用当前凭证查询授权项目，再将准确 ID 和原命令交给原写入接口。多个项目时先明确目标并传入项目 ID。显式填写的项目 ID 直接用于该命令。
+
 精简格式在 MCP 返回时投影。命令、状态校验和数据库审计回执沿用现有契约，同一命令可在两种格式间重放。两种格式都提供 `content` 与 `structuredContent`。本地 Demo 按同一项目快照对照三次调用的文本和结果字节数。
 
 回放在测试专用的本地中转连接丢弃已提交命令的响应。重放前先检查数据库已有回执并回读进展，随后以原命令重放，验证最终只有一条进度事件和一条回执。版本冲突与权限拒绝不会追加写入。 [真实进程断连回归](../../apps/api/src/integration/real-e2e.integration.test.ts)

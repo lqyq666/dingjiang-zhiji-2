@@ -110,11 +110,18 @@ export const workOperationsInput = identifierInput
   );
 
 export const workExecuteInput = workExecutionRequestSchema
-  .safeExtend({ projectId: identifierInput.shape.projectId, responseFormat })
+  .safeExtend({
+    projectId: identifierInput.shape.projectId
+      .optional()
+      .describe(
+        "只有一个授权项目时，记录进展请省略此字段。其他情况填写已确认项目的准确 ID。",
+      ),
+    responseFormat,
+  })
   .refine(
-    ({ responseFormat, payload }) =>
-      responseFormat !== "compact" ||
-      payload.operation.action === "progress.record",
+    ({ projectId, responseFormat, payload }) =>
+      payload.operation.action === "progress.record" ||
+      (projectId !== undefined && responseFormat !== "compact"),
   );
 
 export const compactProgressContextSchema = z.strictObject({
