@@ -593,6 +593,7 @@ describe.skipIf(!run)(
         expect(lost.isError).toBe(true);
         expect(lost.failure).toMatchObject({
           code: "INTEGRATION_NETWORK_ERROR",
+          message: expect.stringContaining("写入结果未知"),
           correlationId: command.correlationId,
           retryable: false,
         });

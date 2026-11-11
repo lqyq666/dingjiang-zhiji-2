@@ -66,7 +66,7 @@ export type IntegrationClient = Pick<
   | "proposeEvidence"
 >;
 
-const safeToolError = (error: unknown) => {
+const safeToolError = (error: unknown, tool: string) => {
   if (error instanceof IntegrationClientError) {
     const { failure, retryAfterSeconds, requestCorrelationId } = error;
     let { message } = failure.error;
@@ -90,7 +90,10 @@ const safeToolError = (error: unknown) => {
   if (error instanceof IntegrationTransportError)
     return {
       code: error.code,
-      message: error.message,
+      message:
+        tool === "work.execute" && error.code === "INTEGRATION_NETWORK_ERROR"
+          ? "写入结果未知。先用只读工具核对目标事项。确需取回回执且用户已确认时，使用相同 requestId 原样提交完整原命令。"
+          : error.message,
       correlationId: error.correlationId,
       // Governed writes must be reconciled with the original requestId rather
       // than blindly retried, and a degraded transport needs a human to restore
@@ -399,6 +402,6 @@ export const callTool = async (
       requiresHuman: false,
     });
   } catch (error) {
-    return errorResult(safeToolError(error));
+    return errorResult(safeToolError(error, name));
   }
 };
