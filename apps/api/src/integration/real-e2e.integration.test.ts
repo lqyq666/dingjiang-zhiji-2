@@ -649,18 +649,36 @@ describe.skipIf(!run)(
         correlationId: staleCorrelationId,
       });
 
+      const fresh = workExecutionContextSchema.parse(
+        (await modernMcp.call("work.operations", { projectId })).data,
+      );
+      expect(fresh.version).toBe(version + 1);
+      expect(fresh.stateFingerprint).not.toBe(stateFingerprint);
+      const mismatchedFingerprintId = randomUUID();
+      const mismatchedFingerprintCorrelationId = randomUUID();
+      const mismatch = await modernMcp.call("work.execute", {
+        ...command,
+        requestId: mismatchedFingerprintId,
+        correlationId: mismatchedFingerprintCorrelationId,
+        expectedVersion: fresh.version,
+      });
+      expect(mismatch.isError).toBe(true);
+      expect(mismatch.failure).toMatchObject({
+        code: "STALE_VERSION",
+        correlationId: mismatchedFingerprintCorrelationId,
+      });
+
       const persisted = await pool.query(
         "SELECT count(*)::int AS count FROM vs01_project_subtasks WHERE progress_note = $1",
         [command.payload.operation.note],
       );
       expect(persisted.rows[0].count).toBe(1);
 
-      // Three calls (write, replay, stale retry) must leave exactly one receipt:
-      // the replay is answered from the ledger and the stale attempt is refused
-      // before it reaches it.
+      // The replay returns the stored receipt. Both snapshot conflicts must
+      // leave the original write as the only committed business effect.
       const receipts = await pool.query(
         "SELECT count(*)::int AS count, max(result_version)::int AS version FROM governed_command_receipts WHERE request_id = ANY($1::uuid[])",
-        [[requestId, staleRequestId]],
+        [[requestId, staleRequestId, mismatchedFingerprintId]],
       );
       expect(receipts.rows[0].count).toBe(1);
       expect(receipts.rows[0].version).toBe(version + 1);
@@ -682,6 +700,7 @@ describe.skipIf(!run)(
         提交版本: receipt.version,
         同一请求返回原回执: replay.data?.replayed === true,
         旧版本提交: String(stale.failure?.code),
+        状态指纹冲突: String(mismatch.failure?.code),
         数据库进度记录: persisted.rows[0].count,
         数据库回执: receipts.rows[0].count,
         "MCP 回读": saved!.progressUpdate!.note,
