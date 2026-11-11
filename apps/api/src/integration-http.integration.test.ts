@@ -904,7 +904,7 @@ const run =
     expect(write.status).toBe(403);
   });
 
-  it("selects the requested project's live work item when another project is current", async () => {
+  it("reads the requested project and rejects writing its work item to another authorized project", async () => {
     const business = app.get(Vs01Service);
     const sourceTaskId = "SO-202608136";
     await business.decideTask(sourceTaskId, {
@@ -926,7 +926,12 @@ const run =
           tenantId: "tenant-demo",
           subjectId: "integration-cross-project",
           role: "PMC",
-          scopes: ["project:read", "workitem:read", "material:read"],
+          scopes: [
+            "project:read",
+            "workitem:read",
+            "workitem:write",
+            "material:read",
+          ],
           projectIds: ["PRJ-OTD-001", secondProject.id],
         },
       ]),
@@ -970,6 +975,57 @@ const run =
         workItemId: item?.id,
         classification: "PROPOSAL",
       });
+
+      if (!item) throw new Error("Missing work item in the other project");
+      const operationsUrl = `${api}/integration/projects/${currentProjectId}/operations`;
+      const readOperations = async (endpoint: string) => {
+        const response = await fetch(endpoint, { headers });
+        expect(response.status).toBe(200);
+        return integrationSuccessEnvelopeSchema(
+          workExecutionContextSchema,
+        ).parse(await response.json()).data;
+      };
+      const otherOperationsUrl = `${url}/operations`;
+      const before = await readOperations(operationsUrl);
+      const otherBefore = await readOperations(otherOperationsUrl);
+      expect(before.allowedActions).toContain("progress.record");
+      expect(otherBefore.allowedActions).toContain("progress.record");
+      const correlationId = randomUUID();
+      const response = await fetch(operationsUrl, {
+        method: "POST",
+        headers: {
+          ...headers,
+          "content-type": "application/json",
+          "x-correlation-id": correlationId,
+        },
+        body: JSON.stringify({
+          requestId: randomUUID(),
+          correlationId,
+          expectedVersion: before.version,
+          reason: "验证跨项目事项不产生进展",
+          payload: {
+            stateFingerprint: before.stateFingerprint,
+            confirmation: "隔离测试中的模拟确认",
+            operation: {
+              action: "progress.record",
+              workItemId: item.id,
+              note: "这条跨项目进展不得落库",
+            },
+          },
+        }),
+      });
+      expect(response.status).toBe(403);
+      expect(
+        integrationFailureEnvelopeSchema.parse(await response.json()),
+      ).toMatchObject({
+        correlationId,
+        error: {
+          code: "PERMISSION_DENIED",
+          message: "事项不属于当前项目",
+        },
+      });
+      expect(await readOperations(operationsUrl)).toEqual(before);
+      expect(await readOperations(otherOperationsUrl)).toEqual(otherBefore);
     } finally {
       vi.unstubAllEnvs();
     }

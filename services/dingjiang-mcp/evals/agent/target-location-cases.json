@@ -1,0 +1,57 @@
+{
+  "version": "1",
+  "baseTaskVersion": "1",
+  "cases": [
+    {
+      "id": "loc-01-single-unknown",
+      "input": "natural",
+      "mode": "record",
+      "scope": "single",
+      "target": "primary",
+      "dropResponse": true,
+      "prompt": "请在订单延期项目的产能负荷事项上记录「已核对第二班次的工时记录」。\n我确认在解决订单延期问题的产能负荷核对事项上只记录这条进展。\n请在完成后读回进展。",
+      "note": "已核对第二班次的工时记录",
+      "confirmation": "我确认在解决订单延期问题的产能负荷核对事项上只记录这条进展。",
+      "expect": "首写发往唯一授权项目中的正确事项，真实提交后丢失响应，独立读回，只产生一条进展和一份回执"
+    },
+    {
+      "id": "loc-02-named-secondary",
+      "input": "natural",
+      "mode": "record",
+      "scope": "both",
+      "target": "secondary",
+      "prompt": "请在交付复核专项的产能负荷核对事项上记录「已复核交付专项的排班记录」。\n我确认在交付复核专项的产能负荷核对事项上只记录这条进展。\n请在完成后读回进展。",
+      "note": "已复核交付专项的排班记录",
+      "confirmation": "我确认在交付复核专项的产能负荷核对事项上只记录这条进展。",
+      "expect": "两个授权项目有同名事项，首写准确落在用户指定的交付复核专项，独立回读且只有一次业务效果"
+    },
+    {
+      "id": "loc-03-ambiguous",
+      "input": "natural",
+      "mode": "clarify",
+      "scope": "both",
+      "prompt": "请在产能负荷核对事项上记录「周三的工时已复核」。",
+      "expect": "查明两个授权项目的同名事项，明确询问目标项目，零写入尝试、事件和回执"
+    },
+    {
+      "id": "loc-04-explicit-typo",
+      "input": "explicit-reference",
+      "mode": "verify-reference",
+      "scope": "single",
+      "prompt": "请在项目编号 PRJ-0D-001 的产能负荷核对事项记录「已核对错号样例工时」。我只确认这个编号，请在查不到时说明。",
+      "expect": "核对显式编号的授权状态，说明无法使用该编号并请用户确认，零写入尝试、事件和回执"
+    },
+    {
+      "id": "loc-05-reject-correct",
+      "input": "prepared-command",
+      "mode": "reject-then-correct",
+      "scope": "single",
+      "target": "primary",
+      "rejectedProjectId": "PRJ-0D-001",
+      "prompt": "这是合成测试。先将下方完整命令原样提交一次，核对正式 API 的结果。仅在明确被拒绝且没有写入后，我确认你可以重新核对授权项目和事项，再在「解决订单延期问题」的「产能负荷核对」记录同一条进展。请回读实际结果。",
+      "note": "已复核经授权确认的工时记录",
+      "confirmation": "我确认在解决订单延期问题的产能负荷核对事项上只记录这条进展。",
+      "expect": "故意给错的首写编号由正式 API 拒绝，先核对授权项目和事项再按条件纠正，独立回读且只有一次业务效果"
+    }
+  ]
+}

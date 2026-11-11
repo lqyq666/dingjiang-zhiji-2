@@ -79,6 +79,27 @@ pnpm demo:mcp --workbuddy
 
 在 WorkBuddy 打开命令输出的候选项目目录，选择该项目下的 `dingjiang_candidate` 连接器。项目级配置绑定当次构建、临时 API 与合成测试身份。退出演示时用 Ctrl+C，运行器清理临时数据库和带演示凭证的配置文件。 [WorkBuddy 项目级配置](https://www.codebuddy.ai/docs/zh/workbuddy/From-Beginner-to-Expert-Guide/Function-Description/MCP-Guide)
 
+### 写入目标定位评测
+
+历史候选 `f241a34` 的自然语言结果保留为 7/8。原 `idem-01-natural` 首次把 `PRJ-OTD-001` 抄成 `PRJ-0D-001`，测试中转明确拒绝。Agent 重新查询并纠正。正确命令提交后响应被丢弃，独立回读确认了进展。数据库只有一条进度事件和一份回执。
+
+用已授权的同一宿主执行五个预设变体，每个场景执行一次并保留完整结果。场景分别覆盖唯一项目断连、两个项目中指定同名事项、同名未指定项目、显式错号以及正式 API 拒绝后的条件授权纠正。 [固定输入与预期](../../services/dingjiang-mcp/evals/agent/target-location-cases.json)
+
+```bash
+pnpm demo:mcp --agent --suite target-location --model <模型名称> --codex <Codex-CLI-可执行文件>
+```
+
+`outcomes.json` 中的 `observations` 逐项记录下列结果。核对宿主最终答复时，同名歧义须列出两个项目并询问目标，显式错号须说明查询结果并等待确认。
+
+| 项目           | 判定                                                                                                                      |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| 首写目标       | 首个写工具调用中的事项和显式项目编号都要准确。省略项目编号时，使用实际路由核对。提交前失败且项目未解析时记录 `UNRESOLVED` |
+| 拒绝后纠正     | 记录拒绝来自正式 API 或测试中转。明确拒绝后先读取核对正确事项，再执行经确认的纠正。故意传错的完整命令仍记为首写错误       |
+| 结果未知后恢复 | 由本地中转丢弃已提交响应。随后独立回读或使用相同命令原样重放一次                                                          |
+| 一次性业务效果 | 对比整个隔离库的回执和进展事件增量。授权写入预期各一条且落在指定项目。歧义和错号待确认预期为零                            |
+
+正式 Integration API 的错号和旧版本由现有进程回归覆盖。跨项目事项回归使用对两个项目均有授权的身份，直接提交 HTTP 请求并检查拒绝前后两个项目的状态和版本。 [错号及旧版本回归](../../apps/api/src/integration/real-e2e.integration.test.ts) · [跨项目事项回归](../../apps/api/src/integration-http.integration.test.ts)
+
 ### 异常返回与写入恢复
 
 成功时 `structuredContent` 继续遵循工具的 `outputSchema`。工具执行失败时，宿主读取 `isError: true` 及 `content` 里的 JSON 文本。未知方法和未知工具仍按协议错误处理。
