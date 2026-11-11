@@ -136,7 +136,7 @@ const operationTools: ToolSeed[] = [
       '记录进展时，在请用户确认前先做项目级查询，传 {"projectId":"实际项目 ID","responseFormat":"compact"}，不传 workItemId。项目级结果返回候选事项、version 和 stateFingerprint。',
       "取齐 version 和 stateFingerprint 再请用户确认。两项均为提交必填。首次提交将 version 填入 expectedVersion，将 stateFingerprint 原样填入 payload.stateFingerprint。",
       "请在用户确认前说明状态变化。首次在 READY（待开始）的事项上记录进展会将事项转为 IN_PROGRESS（进行中），所属阶段若同为 READY 也会转为 IN_PROGRESS。",
-      "按事项回读时同时传 workItemId，单事项结果包含最新进展与版本，不含 stateFingerprint。其他动作使用完整返回。",
+      '提交后核对指定事项，或用户单独要求回读该事项时，首个 work.operations 调用传 {"projectId":"实际项目 ID","workItemId":"实际事项 ID","responseFormat":"compact"}。传 workItemId 时必须显式传 responseFormat: "compact"。单事项结果包含最新进展与版本，不含 stateFingerprint。其他动作使用完整返回。',
     ].join(" "),
     inputSchema: z.toJSONSchema(workOperationsInput, { io: "input" }),
   },
