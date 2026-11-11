@@ -110,8 +110,8 @@ flowchart TD
   Failure["工具调用失败"]
   Failure -->|"明确前置拒绝"| Reject["核对零副作用<br/>确认目标后再写"]
   Failure -->|"429 限流"| Rate["停止本轮调用<br/>告知等待时间"]
-  Failure -->|"STALE_VERSION"| Stale["重读最新快照<br/>判断是否重确认"]
   Failure -->|"写请求超时或断连"| Unknown["结果未知<br/>先独立回读"]
+  Failure -->|"STALE_VERSION"| Stale["重读最新快照<br/>判断是否重确认"]
   Unknown -->|"需要原回执"| Replay["原样重放<br/>保留 requestId"]
 ```
 

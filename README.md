@@ -106,12 +106,12 @@ pnpm demo:mcp
 ```mermaid
 flowchart TD
   Job["同一进展命令"]
-  Job -->|"默认 full"| F1["写前查询<br/>完整项目 · 32,043 B"]
-  F1 --> F2["写入回执<br/>含项目 · 31,886 B"]
-  F2 --> F3["独立回读<br/>完整项目 · 32,177 B"]
-  Job -->|"显式 compact"| C1["写前查询<br/>候选事项和快照 · 766 B"]
-  C1 --> C2["写入回执<br/>本次事项 · 518 B"]
-  C2 --> C3["独立回读<br/>单个事项和版本 · 360 B"]
+  Job -->|"默认 full"| F1["写前查询<br/>完整项目<br/>32,043 B"]
+  F1 --> F2["写入回执<br/>含项目<br/>31,886 B"]
+  F2 --> F3["独立回读<br/>完整项目<br/>32,177 B"]
+  Job -->|"显式 compact"| C1["写前查询<br/>候选事项和快照<br/>766 B"]
+  C1 --> C2["写入回执<br/>本次事项<br/>518 B"]
+  C2 --> C3["独立回读<br/>单个事项和版本<br/>360 B"]
 ```
 
 图中对照同一合成项目和命令的三次调用。工具文本从 **96,106 字节降至 1,644 字节，减少约 98.3%**。默认调用仍返回完整结果。精简格式投影工具输出，按事项回读可直接读取该事项和项目版本。业务命令、校验和事务回执沿用原契约。 [MCP 投影](services/dingjiang-mcp/src/tools/dispatch.ts) · [按事项回读](apps/api/src/integration/work-execution.service.ts) · [基准范围和复现](docs/evals/agent-results.md#compact-字节对照)

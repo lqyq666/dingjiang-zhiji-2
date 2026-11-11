@@ -57,10 +57,11 @@ export const serverInstructions = [
   "",
   "必须遵守：",
   `1. ${proposalInstruction}`,
-  "2. 受治理写入前，先读 work.operations 核对 allowedActions，按工具契约取得对应版本。向用户展示影响并取得本次确认，confirmation 使用用户原话。",
+  "2. 组装新命令前，先读 work.operations 核对 allowedActions，按工具契约取得对应版本。向用户展示影响并取得本次确认，confirmation 使用用户原话。已确认的完整命令按工具说明原样处理。",
   "3. 写入结果未知时先用原 requestId 核对状态。确需重放时原样提交完整原命令，缺字段先询问。",
   `4. ${rateLimitInstruction}`,
-  "5. 方案定稿仅 OWNER，经验发布仅 EXPERT_REVIEWER。角色由服务端校验。",
+  "5. 根据工具消息或可核对记录区分 MCP 参数校验、测试中转和 Integration API 拒绝。仅凭错误码和 correlationId 无法判断来源。证据不足时说明本次工具调用被拒绝，具体拒绝层尚未确认。",
+  "6. 方案定稿仅 OWNER，经验发布仅 EXPERT_REVIEWER。角色由服务端校验。",
 ].join("\n");
 
 export const createMcpToolAccess = (profile: SessionProfile) => {

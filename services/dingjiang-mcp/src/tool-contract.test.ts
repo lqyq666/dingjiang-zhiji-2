@@ -178,6 +178,9 @@ describe("MCP tool input contracts", () => {
     expect(tool?.inputSchema.required).not.toContain("projectId");
     expect(tool?.inputSchema).toMatchObject({
       properties: {
+        projectId: {
+          description: expect.stringContaining("多个授权项目时必填"),
+        },
         requestId: { format: "uuid" },
         correlationId: { format: "uuid" },
         payload: {
@@ -198,6 +201,15 @@ describe("MCP tool input contracts", () => {
         },
       },
     });
+  });
+
+  it("tells hosts how to clarify a wrong ID and honor an exact isolated test command", () => {
+    for (const surface of [dingjiangTools, dingjiangCompatibilityTools]) {
+      const tool = surface.find(({ name }) => name === "work.execute");
+      expect(tool?.description).toContain("请用户确认是否选择具体的授权项目");
+      expect(tool?.description).toContain("隔离测试");
+      expect(tool?.description).toContain("先原样提交一次");
+    }
   });
 });
 
@@ -296,6 +308,7 @@ describe("MCP protocol surface", () => {
     // be stated there rather than assumed from each host's prompt.
     expect(result.instructions).toContain("PROPOSAL");
     expect(result.instructions).toContain("requestId");
+    expect(result.instructions).toContain("拒绝层尚未确认");
     expect(result.instructions).toContain("OWNER");
   });
 
