@@ -114,7 +114,7 @@ export const workExecuteInput = workExecutionRequestSchema
     projectId: identifierInput.shape.projectId
       .optional()
       .describe(
-        "只有一个授权项目时，记录进展请省略此字段。其他情况填写已确认项目的准确 ID。",
+        "多个授权项目时必填，从 work.operations 复制用户选定项目的 projectId。只有一个授权项目的进展记录可以省略。",
       ),
     responseFormat,
   })

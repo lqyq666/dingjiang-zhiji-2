@@ -137,8 +137,15 @@ const operationTools: ToolSeed[] = [
   },
   {
     name: "work.execute",
-    description:
-      '记录进展或执行经用户确认的治理动作。进展的 payload.operation 格式为 {"action":"progress.record","workItemId":"实际事项 ID","note":"进展内容"}。新命令先读 work.operations，用 version 填 expectedVersion，原样复制 stateFingerprint。只有一个授权项目时，记录进展请省略 projectId，由 MCP 从授权列表定位。多个项目时，明确目标后原样填写读取结果中的项目 ID。用户给出已确认的完整命令时，原样传入全部字段。写前说明目标和影响，收到明确确认后才可调用。用户只提出记录请求时，先询问确认。confirmation 填用户的确认原话。requestId 和 correlationId 必须为 UUID。记录进展可用 responseFormat: "compact" 获取精简回执，成功后按事项回读。结果未知时先核对，重放用完整原命令，保留所有字段和值。方案定稿仅 OWNER、经验发布仅 EXPERT_REVIEWER。',
+    description: [
+      '记录进展或执行经用户确认的治理动作。进展的 payload.operation 格式为 {"action":"progress.record","workItemId":"实际事项 ID","note":"进展内容"}。',
+      "新命令先读目标项目的 work.operations，用 version 填 expectedVersion，原样复制 stateFingerprint。",
+      "多个授权项目时，必须传入用户选定项目的 projectId，从读取结果原样复制。同名事项的目标不明时，先请用户选择项目。只有一个授权项目时，记录进展可省略 projectId，由 MCP 从授权列表定位。",
+      "业务请求中的项目编号与授权查询不一致时，说明不匹配，并请用户确认是否选择具体的授权项目，点明查到的项目名称。无候选时请用户核对编号。确认前停止写入。",
+      "用户已确认的完整命令按其字段原样传入。若用户明确授权在隔离测试中验证指定命令，先原样提交一次，保留给定编号及其他字段。核实明确拒绝且零写入后，才按用户的条件授权重新查询目标并纠正。",
+      "写前说明目标和影响，收到明确确认后才可调用。用户只提出记录请求时，先询问确认。confirmation 填用户的确认原话。requestId 和 correlationId 必须为 UUID。",
+      '记录进展可用 responseFormat: "compact" 获取精简回执，成功后按事项回读。结果未知时先核对，重放用完整原命令，保留所有字段和值。方案定稿仅 OWNER、经验发布仅 EXPERT_REVIEWER。',
+    ].join(" "),
     inputSchema: z.toJSONSchema(workExecuteInput, { io: "input" }),
   },
   {
