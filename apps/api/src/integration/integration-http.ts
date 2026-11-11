@@ -235,7 +235,7 @@ const errorFor = (
         code: "FORBIDDEN",
         message:
           exception instanceof IntegrationScopeDenied
-            ? `Integration API 拒绝：当前身份缺少 ${exception.requiredScope} 权限`
+            ? `Integration API 拒绝：当前身份缺少 ${exception.requiredScope} 权限。本次拒绝不代表版本、指纹或其他业务校验已通过。`
             : "当前身份无权执行该操作",
         ...(exception instanceof IntegrationScopeDenied
           ? { requiredScope: exception.requiredScope }

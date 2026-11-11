@@ -986,6 +986,21 @@ const runCases = async (origin, primary, secondary) => {
 const runWorkBuddy = async (origin) => {
   const folder = join(workspace, ".workbuddy");
   await mkdir(folder);
+  await writeFile(
+    join(workspace, "AGENTS.md"),
+    [
+      "# 鼎江合成业务试用",
+      "",
+      "本目录仅用于通过 dingjiang_candidate 完成用户授权的合成业务任务。",
+      "直接发现并调用该 MCP 的工具；项目、事项与材料以授权查询结果为准。",
+      "开发仓库的本地控制面预检不适用于此目录。无需枚举目录、读取配置或调用本地文件、终端工具；连接不可用时报告阻碍。",
+      "新命令的 requestId 与 correlationId 直接填写不同的合法 UUID，无需终端生成。结果未知时保留完整原命令和原 requestId。",
+      "业务确认与服务端权限规则仍按工具契约执行，试用说明不授予额外权限。",
+      "权限拒绝后的总结区分：已证实的缺失 Scope，以及仍未知的版本、参数等后续业务校验；不能由权限拒绝排除其他错误。写前快照只代表写前状态，只有实际回读才报告回读结果。",
+      "",
+    ].join("\n"),
+    { flag: "wx" },
+  );
   const config = join(folder, "mcp.json");
   try {
     await writeFile(

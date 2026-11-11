@@ -10,7 +10,7 @@
 - **真实 Agent 调用**由已登录的宿主根据输入选择工具。已有 Codex CLI 评测的完整预期为 7/10；后续 WorkBuddy 桌面运行已验证进展写入与新会话回读。 [真实 Agent 记录](../evals/agent-results.md)
 - **未验收**的能力包括真人试用、WorkBuddy 材料到证据的完整业务闭环、生产部署和企业身份联调。
 
-`showcase-v1` 标签保持不变。后续 WorkBuddy 修复的运行基线为 `78d70c75e154b0866cfec5a2a165d139cbdbf9fb`，复现这组结果时需检出该提交再运行下方宿主入口，不能把旧标签视为包含新说明。 [桌面运行边界](../evals/agent-results.md#workbuddy-桌面真实任务)
+`showcase-v1` 标签保持不变。进展回归对应 `78d70c75e154b0866cfec5a2a165d139cbdbf9fb`；MCP 专用任务与材料拒绝说明对应 `ebcc1ccec0d77c429216e60958b0b66825437b4e`。复现时检出对应候选再运行宿主入口，旧标签不包含后续说明。 [桌面运行边界与各轮结果](../evals/agent-results.md#workbuddy-桌面真实任务)
 
 ## 运行
 
@@ -38,6 +38,8 @@ pnpm demo:mcp
 ## 非开发者试用
 
 演示者在展示版目录运行 `pnpm demo:mcp --workbuddy`，在已登录的 WorkBuddy 中打开命令输出的候选项目目录，使用项目级 `dingjiang_candidate` 连接器。试用者只需在对话窗口操作。试用结束后由演示者按 Ctrl+C，运行器清理临时数据库和带凭证的配置文件。 [WorkBuddy 项目级配置](https://www.codebuddy.ai/docs/zh/workbuddy/From-Beginner-to-Expert-Guide/Function-Description/MCP-Guide)
+
+最新候选同时生成只适用于该合成目录的 `AGENTS.md`，让宿主直接使用 MCP，并区分权限拒绝与尚未执行的业务校验。需打开输出的工作区；任务说明不修改日常记忆、工具权限或服务端授权，也不是工具沙箱。 [实际效果与失败记录](../evals/agent-results.md#mcp-专用任务与拒绝边界复验)
 
 1. 询问「请告诉我合成订单 SO-202608128 的当前阶段，以及交期证据在哪份文件哪一行。这次只查看。」预期读到「定下解决方案」和 `orders.csv` 第 2 行。
 2. 请求「请在『解决订单延期问题』的『产能负荷核对』事项上记录『已核对订单预计交期，准备与采购复核到料时间。』。请先让我核对目标和原句，等我确认后再提交。」由试用者本人确认。
