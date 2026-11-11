@@ -7,8 +7,10 @@
 `showcase-v1` 固定源码、合成数据和演示指南，沿用 `4a9ead1` 已验收的运行代码。演示从订单延期交接开始，展示如何找到证据、拒绝无权写入、保存进展并回读原文。 [基线提交](https://github.com/lqyq666/dingjiang-zhiji-2/commit/4a9ead16c2155f6402efb571cf69e8dd280d6faa) · [基线 CI](https://github.com/lqyq666/dingjiang-zhiji-2/actions/runs/42981087233)
 
 - **脚本回放**使用预设调用顺序，走实际 stdio、Streamable HTTP/OAuth、Integration API 与临时 PostgreSQL。
-- **真实 Agent 调用**由已登录的宿主根据输入选择工具。已有 Codex CLI 评测的完整预期为 7/10。 [真实 Agent 记录](../evals/agent-results.md#候选两轮复测)
-- **未验收**的能力包括真人试用、WorkBuddy 模型任务、生产部署和企业身份联调。
+- **真实 Agent 调用**由已登录的宿主根据输入选择工具。已有 Codex CLI 评测的完整预期为 7/10；后续 WorkBuddy 桌面运行已验证进展写入与新会话回读。 [真实 Agent 记录](../evals/agent-results.md)
+- **未验收**的能力包括真人试用、WorkBuddy 材料到证据的完整业务闭环、生产部署和企业身份联调。
+
+`showcase-v1` 标签保持不变。后续 WorkBuddy 修复的运行基线为 `78d70c75e154b0866cfec5a2a165d139cbdbf9fb`，复现这组结果时需检出该提交再运行下方宿主入口，不能把旧标签视为包含新说明。 [桌面运行边界](../evals/agent-results.md#workbuddy-桌面真实任务)
 
 ## 运行
 
@@ -42,6 +44,8 @@ pnpm demo:mcp
 3. 请求「请重新查询这项进展，并按原文回读。」核对文字与标点，记录是否有未经确认的写入。
 
 每人记一行 `日期 | 试用编号 | 版本和宿主 | 完成到哪一步 | 原文是否一致 | 本人一句反馈 | PASS / FAIL / NOT_RUN`。来源正确、仅在确认后写入、独立回读逐字一致才记为 `PASS`。当前真人试用为 **NOT_RUN**。
+
+现有样例为定位评测重命名了一个方案事项，保留了其原始 BOM 方案步骤；因此只能验证工具使用、文字保存与权限行为，不用于判定产能核对业务完成。宿主入口的 PMC 测试身份也不含材料写入、核验或证据确认权限。不得把登记进展说成材料已核验、事项已完成，或为跑通而临时扩大日常身份权限。
 
 ## 验收与复现
 

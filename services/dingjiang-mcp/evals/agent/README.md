@@ -11,10 +11,10 @@ flowchart LR
   E2E["实际进程与 PostgreSQL"] --> Tx["真实提交 · 回执 · 回读"]
   Connect["WorkBuddy 运行器连接"] --> Ready["已连接候选 MCP"]
   Model["真实模型任务"] --> Outcome["Codex CLI<br/>工具选择与业务结果"]
-  Model --> NotRun["WorkBuddy<br/>NOT_RUN"]
+  Model --> WorkBuddy["WorkBuddy<br/>进展写入与独立回读"]
 ```
 
-图中每一行独立回答一个验证问题。WorkBuddy 附带运行器曾确认候选 MCP 已连接，模型任务因登录要求记为 `NOT_RUN`。Codex CLI 的真实任务结果单独记录。 [协议测试](../../src/protocol.test.ts) · [Integration HTTP 测试](../../../../apps/api/src/integration-http.integration.test.ts) · [进程回放](../../../../apps/api/src/integration/real-e2e.integration.test.ts) · [结果与复现](../../../../docs/evals/agent-results.md)
+图中每一行独立回答一个验证问题。WorkBuddy 的早期连接记录因登录要求将模型任务记为 `NOT_RUN`；后续已登录桌面宿主完成了隔离合成数据上的进展写入与新会话回读。它们不代表真人试用或企业生产验收。Codex CLI 的固定任务结果单独保留。 [协议测试](../../src/protocol.test.ts) · [Integration HTTP 测试](../../../../apps/api/src/integration-http.integration.test.ts) · [进程回放](../../../../apps/api/src/integration/real-e2e.integration.test.ts) · [结果与复现](../../../../docs/evals/agent-results.md#workbuddy-桌面真实任务)
 
 以下保留人工任务集和记录方式。固定的合成样例也可用已获授权的 Codex CLI 执行，模型输入、首写、恢复和业务结果按样例版本记录。
 
@@ -116,4 +116,4 @@ echo '{"command":"mcp-issue","username":"eval-owner","projectIds":["PRJ-DEMO"]}'
 - 不测多轮长会话（每条任务独立开始）。
 - 不测并发（宿主不会并行发工具调用）。
 - 不测模型差异：换一个宿主/模型要重新跑，结论不能平移。
-- 真实模型调用需要你自己在 WorkBuddy 里发起，本目录不包含任何自动调用模型的代码。
+- WorkBuddy 任务可由试用者或已获授权的桌面自动化提交自然语言输入，由模型自行选择工具；自动化输入不记为真人反馈。Codex CLI 执行入口见 [现有运行器](../../../../scripts/demo/mcp-agent.mjs)。

@@ -843,6 +843,61 @@ describe.skipIf(!run)(
       });
     });
 
+    it("preserves multiline progress verbatim through persistence, replay and independent readback", async () => {
+      const before = workExecutionContextSchema.parse(
+        (await mcp.call("work.operations", { projectId })).data,
+      );
+      const note =
+        "产线 A 已核对：可用工时 7.5h，负荷 82%；仍缺采购到料承诺。\n记录口径：仅为本次合成试用，不作为产能结论。";
+      const command = {
+        projectId,
+        requestId: randomUUID(),
+        correlationId: randomUUID(),
+        expectedVersion: before.version,
+        responseFormat: "compact",
+        reason: "核对多行进展原文和唯一业务效果",
+        payload: {
+          confirmation: "确认合成测试原文，保留换行、空格、数字和标点。",
+          stateFingerprint: before.stateFingerprint,
+          operation: { action: "progress.record", workItemId, note },
+        },
+      };
+      for (const replayed of [false, true]) {
+        expect((await mcp.call("work.execute", command)).data).toMatchObject({
+          requestId: command.requestId,
+          version: before.version + 1,
+          replayed,
+          data: { item: { id: workItemId, progressUpdate: { note } } },
+        });
+      }
+      const readback = workProgressReadbackSchema.parse(
+        (
+          await readOnlyMcp.call("work.operations", {
+            projectId,
+            workItemId,
+            responseFormat: "compact",
+          })
+        ).data,
+      );
+      expect(readback.item.progressUpdate?.note).toBe(note);
+      expect(readback.version).toBe(before.version + 1);
+      const saved = await pool.query(
+        "SELECT progress_note FROM vs01_project_subtasks WHERE id = $1",
+        [workItemId],
+      );
+      expect(saved.rows).toEqual([{ progress_note: note }]);
+      const events = await pool.query(
+        "SELECT note FROM vs01_project_events WHERE project_id = $1 AND event_type = 'PROGRESS_SAVED' AND note = $2",
+        [projectId, note],
+      );
+      expect(events.rows).toEqual([{ note }]);
+      const receipts = await pool.query(
+        "SELECT request_id FROM governed_command_receipts WHERE request_id = $1",
+        [command.requestId],
+      );
+      expect(receipts.rows).toEqual([{ request_id: command.requestId }]);
+    });
+
     it("validates OAuth grants, blocks read-only writes and reads the authorized receipt back", async () => {
       const httpPort = 39_000 + Math.floor(Math.random() * 3_000);
       const remoteUrl = `http://127.0.0.1:${httpPort}/mcp`;
