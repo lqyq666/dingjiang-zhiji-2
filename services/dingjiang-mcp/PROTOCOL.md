@@ -2,29 +2,7 @@
 
 使用与配置见 [README.md](README.md)。
 
-## 实际调用链
-
-```mermaid
-flowchart LR
-  host["WorkBuddy / IDE<br/>模型与 MCP Client"]
-  mcp["鼎江 MCP Server<br/>工具发现、校验、转接"]
-  api["鼎江业务 API · NestJS<br/>权限、业务规则、审计"]
-  db["PostgreSQL<br/>项目、证据、回执"]
-  web["Web 应用<br/>人工操作与状态回读"]
-  idp["OAuth 发行方<br/>授权与发放令牌"]
-
-  host <-->|"MCP · stdio / Streamable HTTPS<br/>JSON-RPC 2.0"| mcp
-  host <-->|"OAuth · 授权码 + PKCE"| idp
-  mcp -->|"HTTPS · 获取 JWKS"| idp
-  mcp <-->|"HTTP(S) JSON · Bearer<br/>/api/integration/*"| api
-  api <-->|"SQL<br/>PostgreSQL 协议"| db
-  web <-->|"HTTP(S) JSON<br/>/api/vs01/* 等"| api
-
-  classDef mcpLayer fill:#e8f5f2,stroke:#298578,color:#123c37,stroke-width:1.5px
-  class mcp mcpLayer
-```
-
-宿主用模型选择工具。MCP 校验调用并转交 Integration API，由 API 核验身份和项目权限、执行业务规则。Web 通过自己的业务接口回读同一份 PostgreSQL 记录。
+[系统与业务总览](../../README.md#系统与业务总览)展示 stdio、Streamable HTTP 和 Integration API 的连接关系。业务授权见 [权限与信任边界](../../docs/architecture/system-overview.md#权限与信任边界)。
 
 ## 1. 版本与传输
 
@@ -43,37 +21,9 @@ HTTP 入口发布 RFC 9728 资源元数据，`oauth.ts` 生成授权挑战并验
 
 ## 2. stdio 会话的完整往返
 
-```mermaid
-sequenceDiagram
-  autonumber
-  participant H as 宿主
-  participant S as MCP Server
-  participant A as 业务 API
-  participant D as PostgreSQL
-
-  Note over S: 启动时固定工具面、只读策略与 buildIdentity
-  alt 2025-06-18
-    H->>S: initialize(protocolVersion, clientInfo)
-    S-->>H: protocolVersion + capabilities + serverInfo + instructions
-  else 2026-07-28
-    opt 预先发现能力
-      H->>S: server/discover(params._meta)
-      S-->>H: supportedVersions + capabilities + instructions
-    end
-    Note over H,S: 每个请求在 _meta 携带版本与客户端能力
-  end
-  H->>S: tools/list
-  Note over S: 注册表 → 有序视图<br/>校验 annotations 与 outputSchema 完备
-  S-->>H: tools[]（常规 13 或 23，只读 7 或 17）
-  H->>S: tools/call(name, arguments)
-  Note over S: 校验 JSON-RPC 信封 → 检查只读策略 → 校验工具参数
-  S->>A: HTTP + bearer（身份由令牌绑定，不在参数里）
-  A->>D: 带 RLS 的查询
-  D-->>A: 行
-  A-->>S: JSON
-  Note over S: 响应按契约校验<br/>content + structuredContent
-  S-->>H: 结果，或 isError + code + correlationId
-```
+1. 启动时固定工具面、只读策略和构建标识。旧版通过 `initialize` 握手，新版可用 `server/discover`，并在每次调用携带 `_meta`。
+2. `tools/list` 返回当前会话的有序工具面。常规面为 13 或 23 个工具，只读面为 7 或 17 个工具。
+3. `tools/call` 通过信封、工具面与入参检查后，经配置的 Integration Bearer 发出 HTTP 请求。API 应用权限和业务规则，MCP 校验返回契约并交付结果。
 
 ## 3. 协议方法
 
@@ -142,16 +92,30 @@ sequenceDiagram
 | 未知工具名     | `-32602` + `UNKNOWN_TOOL`                    | 与「工具执行失败」分开：后者是结果里的 `isError`，前者是这个请求根本不该被分发 |
 | handler 抛异常 | `-32603` + `HANDLER_FAILURE`                 | 诊断写 stderr，不进协议流，也不中断后续请求                                    |
 
-业务失败通过 `isError: true` 和文本 JSON 交付 `code`、`retryable`、`requiresHuman` 以及 API 提供的 `correlationId`。常规工具错误也提供 `structuredContent`。以下是错误分类的判定顺序。
+业务失败通过 `isError: true` 和文本 JSON 交付 `code`、`retryable`、`requiresHuman` 及可用的追踪号。限流可附 `retryAfterSeconds`。成功结果同时携带契约匹配的 `structuredContent` 和 `content`。
 
-| 类型                        | 含义                              | 是否保留原文                             |
-| --------------------------- | --------------------------------- | ---------------------------------------- |
-| `IntegrationClientError`    | 服务端返回的标准 failure envelope | 保留（服务端消息可信）                   |
-| `IntegrationTransportError` | 超时 / 网络 / 响应与契约不一致    | 保留（我们自己写的文案）                 |
-| `ZodError`                  | 入参不符合契约                    | 固定文案                                 |
-| 其它异常                    | 未预期                            | **不保留**，只给固定文案 + correlationId |
+| 类型                        | 含义                              | 是否保留原文             |
+| --------------------------- | --------------------------------- | ------------------------ |
+| `IntegrationClientError`    | 服务端返回的标准 failure envelope | 保留（服务端消息可信）   |
+| `IntegrationTransportError` | 超时 / 网络 / 响应与契约不一致    | 保留（我们自己写的文案） |
+| `ZodError`                  | 入参不符合契约                    | 固定文案                 |
+| 其它异常                    | 未预期                            | **不保留**，只给固定文案 |
 
 最后一行是刻意的：任意异常的 message 可能带出文件路径或内部标识，直接回给宿主等于把它们写进对话记录。
+
+### 错误与恢复
+
+```mermaid
+flowchart TD
+  Failure["工具调用失败"]
+  Failure -->|"明确前置拒绝"| Reject["核对零副作用<br/>确认目标后再写"]
+  Failure -->|"429 限流"| Rate["停止本轮调用<br/>告知等待时间"]
+  Failure -->|"STALE_VERSION"| Stale["重读最新快照<br/>判断是否重确认"]
+  Failure -->|"写请求超时或断连"| Unknown["结果未知<br/>先独立回读"]
+  Unknown -->|"需要原回执"| Replay["原样重放<br/>保留 requestId"]
+```
+
+这张图说明宿主收到失败信息后如何判断下一步。已提交的响应可能丢失。独立查询能确认当前进展，只有匹配的原回执能确认某个 `requestId` 的提交结果。明确前置拒绝且确认零副作用后，可以形成新命令。限流和版本冲突由宿主提示用户，等待时间缺失时报告未知。结果未知的写入保留原命令字段和请求编号，由宿主在有授权时发起核对或原样重放。 [错误映射](src/tools/dispatch.ts) · [网络错误与请求追踪](src/client.ts) · [幂等回执](../../apps/api/src/command-kernel/postgres-governed-command-store.ts) · [断连验收](../../apps/api/src/integration/real-e2e.integration.test.ts)
 
 ## 5. stdio 的队列与响应
 

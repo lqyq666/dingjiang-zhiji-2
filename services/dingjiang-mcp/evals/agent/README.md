@@ -1,12 +1,22 @@
-# Agent 级评测（人工执行）
+# Agent 级评测
 
 契约评测（`evals/run.mjs`）验证的是「工具本身对不对」。这里验证的是另一件事：**一个真实 Agent 拿着自然语言任务，能不能选对工具、填对参数、在越权时停手**。
 
-## 为什么不用脚本自动化
+## 验证证据分层
 
-自动评分需要调用付费模型，且不同模型的失败模式不同，把一次运行的结果写成「成功率」会误导。所以这里的产出是**任务集 + 记录规范**，由 WorkBuddy 会话逐条执行、人工记录。
+```mermaid
+flowchart LR
+  Unit["单测与契约"] --> Schema["输入输出 · 错误格式"]
+  HTTP["真实 Integration HTTP"] --> Guard["拒绝与角色范围"]
+  E2E["实际进程与 PostgreSQL"] --> Tx["真实提交 · 回执 · 回读"]
+  Connect["WorkBuddy 运行器连接"] --> Ready["已连接候选 MCP"]
+  Model["真实模型任务"] --> Outcome["Codex CLI<br/>工具选择与业务结果"]
+  Model --> NotRun["WorkBuddy<br/>NOT_RUN"]
+```
 
-**没有实际跑过的数据，不得声称拿到 Agent 成功率。**
+图中每一行独立回答一个验证问题。WorkBuddy 附带运行器曾确认候选 MCP 已连接，模型任务因登录要求记为 `NOT_RUN`。Codex CLI 的真实任务结果单独记录。 [协议测试](../../src/protocol.test.ts) · [Integration HTTP 测试](../../../../apps/api/src/integration-http.integration.test.ts) · [进程回放](../../../../apps/api/src/integration/real-e2e.integration.test.ts) · [结果与复现](../../../../docs/evals/agent-results.md)
+
+以下保留人工任务集和记录方式。固定的合成样例也可用已获授权的 Codex CLI 执行，模型输入、首写、恢复和业务结果按样例版本记录。
 
 ## 一、准备两个身份
 

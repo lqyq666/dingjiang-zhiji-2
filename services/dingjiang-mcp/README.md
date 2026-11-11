@@ -135,7 +135,7 @@ Integration client 将失败分为三类，避免把服务端问题误报为调�
 
 ## 错误码与处置
 
-工具失败时返回 `isError: true`。`content.text` 中的 JSON 包含 `code`、`message`、`retryable` 和 `requiresHuman`。API 侧失败还带 `correlationId`。常规工具错误也提供同一份 `structuredContent`。
+工具失败时返回 `isError: true`，由 `content.text` 中的 JSON 提供 `code`、`message`、`retryable`、`requiresHuman` 和可用的追踪号。限流时可能附带 `retryAfterSeconds`。`structuredContent` 用于符合成功输出契约的结果。 [恢复分支](PROTOCOL.md#错误与恢复)
 
 | code                                      | 来源     | 含义                                        | 处置                                               |
 | ----------------------------------------- | -------- | ------------------------------------------- | -------------------------------------------------- |

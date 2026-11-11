@@ -3,7 +3,24 @@
 [![CI](https://github.com/lqyq666/dingjiang-zhiji-2/actions/workflows/ci.yml/badge.svg)](https://github.com/lqyq666/dingjiang-zhiji-2/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
-鼎江智绩把订单延期工单变成有负责人、证据和阶段门的协作项目。员工在 WorkBuddy 通过自定义 MCP Server 恢复项目、查看下一动作和登记进度。Web 展示业务事实与处理记录，PostgreSQL 保存证据和审计回执。AI 建议标记为 `PROPOSAL`，写入由 API 校验身份、项目权限和版本。
+鼎江智绩把订单延期工单变成有负责人、证据和阶段门的协作项目。员工可通过接入自定义 MCP Server 的 Agent 宿主恢复项目、查看下一动作和登记进度。Web 展示业务事实与处理记录，PostgreSQL 保存证据和审计回执。AI 建议标记为 `PROPOSAL`，写入由 API 校验身份、项目权限和版本。
+
+## 系统与业务总览
+
+```mermaid
+flowchart TD
+  Need["员工查询延期订单<br/>或登记进展"] --> Host["Agent 宿主<br/>解释证据 · 选择工具"]
+  Host -->|"本机 stdio · JSON-RPC"| Local["MCP stdio"]
+  Host -->|"Streamable HTTP · OAuth"| Remote["MCP /mcp"]
+  Local -->|"Integration HTTP · Bearer"| API["IntegrationController"]
+  Remote -->|"HTTP · 映射凭证"| API
+  API --> Read["授权读取<br/>项目与证据"]
+  API --> Write["GovernedCommandKernel<br/>受治理写入"]
+  Read -->|"SQL 查询"| DB[("PostgreSQL<br/>业务事实与回执")]
+  Write -->|"SQL 事务"| DB
+```
+
+图中两条接入路径共用 Integration API，读路径返回角色范围内的证据，写路径提交受治理命令。数据库连接由 API 管理。远程 OAuth 接入已在隔离环境验证。 [本机入口](services/dingjiang-mcp/src/server.ts) · [远程入口](services/dingjiang-mcp/src/server-http.ts) · [API 控制器](apps/api/src/integration/integration.controller.ts)
 
 ## 运行 MCP 演示
 
@@ -33,7 +50,7 @@ pnpm demo:mcp
 
 ## 一个延期工单如何被闭环
 
-前面的速览讲「怎么造的」，这一节讲**为什么造**：把「订单延期」这类模糊问题，变成有证据、有阶段门、有人签字确认的交付项目（[系统总览 §1](docs/architecture/system-overview.md)）。产品立场写在 [PRODUCT.md](PRODUCT.md)：Web 是只读的记录与溯源表面，WorkBuddy 才是行动表面；AI 可以组装事实、提出候选原因、整理经验草稿，但**提案在被责任人明确决定之前不是事实**。
+系统把订单延期转为有证据、阶段门和责任人确认的交付项目。Web 用于查看业务记录与来源，员工可通过 MCP 宿主登记获准的进展。AI 生成的候选原因与经验草稿标记为 `PROPOSAL`。 [产品定位](PRODUCT.md)
 
 种子库里的 `SO-202608128` 是这条链路的起点（[`vs01-db.ts`](apps/api/src/vs01-db.ts)）。七个阶段来自 [`work-stages.ts`](apps/api/src/work-stages.ts)，不是文档画出来的：
 
@@ -48,23 +65,7 @@ pnpm demo:mcp
 | 6   | `RESULT_ACCEPTANCE` 确认实际结果     | 员工提交、审批结果                     | 不能确认经营结果                          | `vs01_result_validations`                                                                                                     |
 | 7   | `KNOWLEDGE_CAPTURE` 总结可复用做法   | 候选经验 → **专家人工批准** → 正式经验 | 可生成草稿，不能发布经验                  | `vs01_experience_candidates` → `vs01_formal_experiences`；[演示 12 步](docs/demo/vs17-experience-intelligence-demo-script.md) |
 
-```mermaid
-sequenceDiagram
-  autonumber
-  actor P as 员工 / PMC
-  participant A as WorkBuddy / MCP
-  participant K as 受治理命令内核
-  participant D as PostgreSQL（唯一事实源）
-  A->>K: work.context（只读 + scopes / projectIds）
-  K->>D: 按 tenant + project 读取
-  D-->>A: 带角色边界的工作上下文快照
-  A-->>P: PROPOSAL（候选原因 / 计划 / 经验草稿）
-  Note over A,D: 提案不落库、不推进阶段
-  P->>K: evidence.confirm / work.execute（人工确认）
-  K->>K: 角色校验 + requestId 幂等 + expectedVersion
-  K->>D: BEGIN → 写事实 + 不可变 SourceVersion + 审计 → COMMIT
-  K-->>P: 回执（同一事务内读回）
-```
+一次业务写入的确认、事务与独立回读见 [受治理写入](docs/architecture/system-overview.md#4-一次受治理写入的真实路径)。
 
 链路上的约束是可数的，不是口号：
 
@@ -100,33 +101,28 @@ sequenceDiagram
 - 飞书租户管理员可映射为 `OWNER`，其他激活成员映射为 `PMC`；`EXPERT_REVIEWER` 由人工授予。
 - 生产写入默认关闭，启用前必须完成迁移、备份和权限验收。
 
-## 架构一页图
+## 进展记录的精简返回
 
 ```mermaid
-flowchart LR
-  Web["Web 控制台<br/>Next.js · 三个角色视图"]
-  MCP["WorkBuddy / IDE<br/>自研 MCP Server · 28 工具"]
-  Ext["飞书 / n8n<br/>集成入口"]
-  AI["AI 产出<br/>恒为 PROPOSAL"]
-
-  subgraph API["apps/api · NestJS"]
-    Guard["接入层：CORS / 鉴权 / 安全过滤"]
-    Ctrl["Controllers · 86 条路由"]
-    Kernel["受治理命令内核<br/>requestId 幂等 · expectedVersion 乐观并发"]
-    Domain["领域层 · 六个上下文<br/>读模型 / 项目状态机 / 材料 / 经验 / 助手 / 任务决策"]
-  end
-
-  DB[("PostgreSQL 17<br/>唯一事实源 · 59 表 · FORCE RLS")]
-
-  Web --> Guard
-  MCP -->|"bearer + scopes"| Guard
-  Ext -->|"bearer + scopes"| Guard
-  Guard --> Ctrl --> Kernel --> Domain --> DB
-  Domain -.->|"写完在同一事务读回"| Kernel
-  AI -.->|"只提建议，不写事实"| Kernel
+flowchart TD
+  Job["同一进展命令"]
+  Job -->|"默认 full"| F1["写前查询<br/>完整项目 · 32,043 B"]
+  F1 --> F2["写入回执<br/>含项目 · 31,886 B"]
+  F2 --> F3["独立回读<br/>完整项目 · 32,177 B"]
+  Job -->|"显式 compact"| C1["写前查询<br/>候选事项和快照 · 766 B"]
+  C1 --> C2["写入回执<br/>本次事项 · 518 B"]
+  C2 --> C3["独立回读<br/>单个事项和版本 · 360 B"]
 ```
 
-三个入口最终落在同一段写入代码上，是为了让治理规则只有一份；MCP 不是「另一个后端」。完整的写入链路、阶段门与已知债务见 [`docs/architecture/system-overview.md`](docs/architecture/system-overview.md)。
+图中对照同一合成项目和命令的三次调用。工具文本从 **96,106 字节降至 1,644 字节，减少约 98.3%**。默认调用仍返回完整结果。精简格式投影工具输出，按事项回读可直接读取该事项和项目版本。业务命令、校验和事务回执沿用原契约。 [MCP 投影](services/dingjiang-mcp/src/tools/dispatch.ts) · [按事项回读](apps/api/src/integration/work-execution.service.ts) · [基准范围和复现](docs/evals/agent-results.md#compact-字节对照)
+
+| 继续阅读                                                                      | 内容                                              |
+| ----------------------------------------------------------------------------- | ------------------------------------------------- |
+| [受治理写入](docs/architecture/system-overview.md#4-一次受治理写入的真实路径) | 从确认、幂等和版本检查到事务与独立回读            |
+| [权限与信任边界](docs/architecture/system-overview.md#权限与信任边界)         | stdio 凭证、OAuth 映射和生产人工授权              |
+| [错误与恢复](services/dingjiang-mcp/PROTOCOL.md#错误与恢复)                   | 明确拒绝、限流、版本过期和结果未知                |
+| [验证证据分层](services/dingjiang-mcp/evals/agent/README.md#验证证据分层)     | 单测、API、数据库、宿主连接和真实模型各自证明什么 |
+| [Agent 结果](docs/evals/agent-results.md)                                     | 候选 SHA、实测结果与未验收边界                    |
 
 ## 项目结构
 
@@ -288,7 +284,7 @@ MCP 工具面声明 `annotations`（读写、破坏性、幂等、开放世界�
 | [DESIGN.md](DESIGN.md)                                             | Web 端设计系统：OKLCH 色板、层级与排版规则                         |
 | [docs/architecture/domain-map.md](docs/architecture/domain-map.md) | 领域概念 → 实现文件 / 关键表 / 验证命令的索引，供深挖时定位        |
 | [docs/architecture/](docs/architecture/)                           | 系统全景、系统不变量、集成就绪度与各子系统边界                     |
-| [docs/api-surface.md](docs/api-surface.md)                         | 全部 86 条 HTTP 路由（自动生成，带防漂移守卫）                     |
+| [docs/api-surface.md](docs/api-surface.md)                         | 全部 89 条 HTTP 路由（自动生成，带防漂移守卫）                     |
 | [docs/research/](docs/research/)                                   | 前期调研：顾问工作方法、绩效顾问工作流、界面工作流研究             |
 | [docs/product/](docs/product/)                                     | 前端 POC 蓝图与视觉资产                                            |
 | [docs/demo/](docs/demo/)                                           | MCP 真实链路回放与经验智能走查                                     |

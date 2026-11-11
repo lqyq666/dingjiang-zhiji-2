@@ -19,95 +19,61 @@
 
 ## 2. 分层视图
 
-```text
-┌──────────────────────────────── 渠道层 ────────────────────────────────┐
-│  Web 角色控制台 (Next.js)      MCP 客户端 (WorkBuddy/IDE)   飞书 / n8n  │
-│  PMC · OWNER · EXPERT 三个视图  自研 MCP Server，28 个工具   只读通知与同步 │
-└───────────────┬──────────────────────────┬───────────────────────┬─────┘
-                │ 浏览器 cookie + x-vs01-role│ bearer token + scope  │ Webhook
-┌───────────────▼──────────────────────────▼───────────────────────▼─────┐
-│                            接入层（apps/api）                            │
-│  CORS 白名单 · no-store · ProductionAccessGuard · SafeExceptionFilter   │
-│  集成接口鉴权（bearer → principal{tenant,subject,role,scopes,projects}）  │
-└───────────────┬──────────────────────────┬─────────────────────────────┘
-                │                          │
-┌───────────────▼──────────────────────────▼─────────────────────────────┐
-│                        应用层（NestJS controllers）                      │
-│  Vs01Controller  AssistantController  RootCauseWorkpaperController      │
-│  IntegrationController  ExperienceIntelligenceController  Identity*     │
-└───────────────┬────────────────────────────────────────────────────────┘
-                │
-┌───────────────▼────────────────────────────────────────────────────────┐
-│                            领域层（无框架依赖）                          │
-│  read-model     ·  projects       ·  command-kernel  ·  materials      │
-│  evidence       ·  workpapers     ·  experience    ·  experience-intelligence │
-│  assistant      ·  intake         ·  identity/access-policy            │
-│  task-orchestration  ·  tasks                                         │
-└───────────────┬────────────────────────────────────────────────────────┘
-                │  只有这里碰 SQL
-┌───────────────▼────────────────────────────────────────────────────────┐
-│                              数据层                                     │
-│  PostgreSQL 17 + pgvector · 60 张表 · 业务表全部 FORCE ROW LEVEL SECURITY │
-│  不可变 SourceVersion · 受治理命令回执 · 事件表 · 迁移 42 个（含校验和） │
-│  文件内容库（MaterialContentVault，按 sha256 寻址）                      │
-└────────────────────────────────────────────────────────────────────────┘
-```
+[系统与业务总览](../../README.md#系统与业务总览)展示宿主、两种 MCP 传输、Integration API 和 PostgreSQL 的关系。Web 角色控制台通过 HTTP 读取 API 的业务记录。飞书与 n8n 使用各自配置的 Integration 接入范围。
 
-**依赖方向是单向的**，由 `tooling/architecture/boundaries.test.ts` 强制：包代码不许依赖 NestJS/Drizzle，Web 不许引入任何数据库驱动，跨包只能从包根导入。这条测试比文档可靠——文档会过期，测试不会。
+依赖方向由 [架构守卫](../../tooling/architecture/boundaries.test.ts)校验。共享契约从包根导出，Web 通过 API 访问数据，MCP 在适配层结束。
 
 ---
 
 ## 3. 三个入口，一套事实
 
-| 入口                       | 谁在用         | 鉴权方式                                                     | 关键约束                                                        |
-| -------------------------- | -------------- | ------------------------------------------------------------ | --------------------------------------------------------------- |
-| `apps/web`                 | 人（三个角色） | 会话 cookie；写操作在生产环境被 `ProductionAccessGuard` 拦下 | 生产环境浏览器只允许 GET，写必须走 MCP                          |
-| `services/dingjiang-mcp`   | AI 宿主        | 每会话 bearer token，绑定 `scopes` 与 `projectIds`           | 22 个只读工具 + 6 个受治理写工具，语义靠 `ToolAnnotations` 区分 |
-| `apps/api/src/integration` | 飞书 / n8n     | 同上                                                         | 只能走 Integration API，禁止直连数据库                          |
+| 入口                       | 调用方             | 凭证与边界                                                                           |
+| -------------------------- | ------------------ | ------------------------------------------------------------------------------------ |
+| `apps/web`                 | 员工、负责人、专家 | 生产浏览器会话使用 cookie，业务路由由 `ProductionAccessGuard` 限制为只读             |
+| `services/dingjiang-mcp`   | Agent 宿主         | stdio 使用配置的 Integration 凭证。远程入口验证 OAuth，再使用绑定的 Integration 凭证 |
+| `apps/api/src/integration` | MCP 和其他集成     | Integration Bearer 绑定项目与 Scope，业务读写在 API 层校验                           |
 
-MCP 不是"另一个后端"，它是**受治理命令的另一个客户端**。所以 `work.execute` 和 Web 的写按钮最终落在同一段事务代码上——这是刻意的：两个入口如果各写一套，治理规则迟早会分叉。
+`work.execute` 通过 Integration API 执行受治理命令。Web 经业务 API 读回同一份事实。 [生产浏览器守卫](../../apps/api/src/identity/identity-http.ts)
 
 `workspace.resume`、`work.context` 和 `evidence.bundle` 各通过一次 Integration HTTP 请求获取结果。API 按工具所需的 scope 校验权限，在 PostgreSQL 只读快照内复用来源任务和证据提案。
 
 ---
 
-## 4. 一次受治理写入的真实路径
+### 权限与信任边界
 
-这是全系统最需要理解的流程。以 `progress.record`（记录子任务进展）为例：
-
-```text
-MCP 客户端
-  │  tools/call { name: "work.execute",
-  │               arguments: { requestId, expectedVersion, payload } }
-  ▼
-dingjiang-mcp/src/tools/dispatch.ts  校验入参 Zod schema
-  │  client.ts 注入 Bearer
-  ▼  HTTP POST /api/integration/projects/:id/operations
-integration-http.ts                  验证 token → principal{tenant,role,scopes,projects}
-  │                                   越权项目 → 403 FORBIDDEN（不是 404，不掩盖）
-  ▼
-governed-command-kernel.ts
-  │  1. 检查 requiredScope 与 allowedRoles
-  │  2. 计算 payload 指纹（canonicalJson，拒绝 NaN/稀疏数组/自定义原型）
-  │  3. BEGIN
-  │  4. 查回执表：同 requestId + 同指纹 → 直接返回原回执（replayed: true）
-  │  5. 校验 expectedVersion，过期 → STALE_VERSION（乐观并发，不覆盖别人）
-  │  6. 执行 handler（领域状态机）
-  │  7. 写 governed_command_receipts（唯一索引 tenant+command+request_id）
-  │  8. 写 governed_command_audit_events
-  │  9. COMMIT
-  ▼
-PostgreSQL（RLS 兜底：即使应用层漏了 tenant 条件，行级策略仍然挡住）
-  │
-  ▼
-回执 { version, data, replayed, correlationId }
+```mermaid
+flowchart TD
+  Agent["模型选择工具<br/>提供业务参数"]
+  Agent -->|"本机 stdio"| Local["server.ts<br/>配置的 Integration 凭证"]
+  Agent -->|"Streamable HTTP · OAuth"| OAuth["oauth.ts<br/>核验 JWT、资源和 scope"]
+  OAuth -->|"签名主体 sub"| Bind["服务端绑定<br/>选取 Integration 凭证"]
+  Local -->|"Integration HTTP · Bearer"| Auth["integration-http.ts<br/>解析服务端身份"]
+  Bind -->|"Integration HTTP · Bearer"| Auth
+  Auth --> Read["读取校验<br/>租户 · 项目 · Scope"]
+  Auth --> Write["命令校验<br/>租户 · 项目 · Scope · 角色"]
+  Write -->|"新命令按策略需要"| Approval["生产人工授权<br/>核验并消费绑定的记录"]
+  Console["可信维护入口<br/>核对并授权具体命令"] --> Approval
 ```
 
-三个细节值得单独指出：
+这张图说明业务身份从哪里取得，以及每一层能授予什么。OAuth 的写 scope 只决定远程宿主可用的工具面。Integration API 仍检查实际调用身份和范围。宿主确认及 `confirmation` 字段表达用户意图；生产人工授权由可信入口按身份、项目、请求、版本和命令指纹独立绑定。常规进展记录按策略可免这份独立授权，仍走命令校验。 [OAuth 绑定](../../services/dingjiang-mcp/src/oauth.ts) · [Integration 鉴权](../../apps/api/src/integration/integration-http.ts) · [人工授权策略](../../apps/api/src/command-kernel/production-authorization.ts)
 
-- **幂等键是 `requestId`**，不是"重试次数"。网络抖动导致的重发，返回的是同一份回执，不会产生第二条事实。端到端测试里专门断言过：三次调用，`vs01_project_subtasks` 只落一条、`governed_command_receipts` 只落一条。
-- **`expectedVersion` 是并发令牌**，不是提示。两个 PMC 同时改同一子任务，后一个必然拿到 `STALE_VERSION` 而不是静默覆盖。
-- **payload 指纹在事务外算好**。同一个 `requestId` 配不同 payload 必须被拒绝——否则幂等键就变成了"可以覆盖"的后门。
+## 4. 一次受治理写入的真实路径
+
+```mermaid
+flowchart TD
+  Locate["work.operations<br/>定位事项 · 读取版本和指纹"] --> Confirm["宿主展示影响<br/>取得用户确认"]
+  Confirm --> Submit["work.execute<br/>Integration API 鉴权"]
+  Submit --> Lock["事务内按 requestId 加锁<br/>生产复核账号和凭证"]
+  Lock --> Receipt{"已有回执？"}
+  Receipt -->|"命令指纹相同"| Replay["返回原回执<br/>replayed = true"]
+  Receipt -->|"命令指纹不同"| Conflict["拒绝<br/>CONFLICT"]
+  Receipt -->|"无回执"| Approval["新命令<br/>按策略消费生产人工授权"]
+  Approval --> Snapshot["项目锁内校验<br/>版本 · 状态指纹 · 事项归属"]
+  Snapshot --> Commit["写入业务、回执和审计<br/>同一事务 COMMIT"]
+  Commit --> Readback["独立查询<br/>核对最新事项进展"]
+```
+
+这张图说明一次进展写入在什么顺序下提交或重放。旧回执分支仍需通过当前授权，匹配原命令指纹后直接返回已存回执。新命令才会进入人工授权、版本和状态指纹校验。拒绝时事务回滚。独立回读是另一次查询，检查的是当前业务状态。 [命令内核](../../apps/api/src/command-kernel/governed-command-kernel.ts) · [事务与回执](../../apps/api/src/command-kernel/postgres-governed-command-store.ts) · [事项写入](../../apps/api/src/integration/work-execution.service.ts)
 
 ---
 
