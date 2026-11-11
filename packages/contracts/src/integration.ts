@@ -100,6 +100,8 @@ export const integrationMaterialGapSchema = z.object({
   requirementId: idSchema,
   label: idSchema,
   status: z.enum(["MISSING", "UNVERIFIED"]),
+  // Optional for older API responses. Do not substitute a project version.
+  availabilityVersion: z.union([z.literal(0), z.literal(1)]).optional(),
 });
 
 // Integration projects expose only the requesting role's authorized work items.
@@ -263,6 +265,7 @@ export const integrationErrorSchema = z.object({
   message: idSchema,
   retryable: z.boolean(),
   requiresHuman: z.boolean(),
+  requiredScope: integrationScopeSchema.optional(),
 });
 
 /**

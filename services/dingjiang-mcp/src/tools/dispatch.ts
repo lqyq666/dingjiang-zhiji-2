@@ -88,6 +88,7 @@ const safeToolError = (error: unknown) => {
       message,
       retryable: failure.error.retryable,
       requiresHuman: failure.error.requiresHuman,
+      requiredScope: failure.error.requiredScope,
       correlationId: failure.correlationId,
       requestCorrelationId,
       retryAfterSeconds,
@@ -140,6 +141,7 @@ const errorResult = (payload: {
   message: string;
   retryable: boolean;
   requiresHuman: boolean;
+  requiredScope?: string;
   correlationId?: string;
   requestCorrelationId?: string;
   retryAfterSeconds?: number;

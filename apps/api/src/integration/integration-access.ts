@@ -5,6 +5,13 @@ import type {
 } from "@dingjiang/contracts";
 import { runtimeTenantId } from "../runtime-config";
 
+/** Only the scope guard may identify a missing scope; never parse exception text. */
+export class IntegrationScopeDenied extends ForbiddenException {
+  constructor(readonly requiredScope: IntegrationScope) {
+    super(`Integration principal 缺少 ${requiredScope}`);
+  }
+}
+
 export const requireIntegrationTenant = (tenantId: string): void => {
   if (tenantId !== runtimeTenantId())
     throw new ForbiddenException("当前 tenant 不在本地 Integration API 范围内");
