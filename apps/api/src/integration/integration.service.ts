@@ -54,6 +54,7 @@ import { MaterialCreateCommand } from "../materials/material-create-command";
 import { MaterialVerificationCommand } from "../materials/material-verification-command";
 import { EvidenceProposalCommand } from "../evidence/evidence-proposal-command";
 import {
+  IntegrationScopeDenied,
   hasProjectAccess,
   hasScope,
   requireIntegrationTenant,
@@ -75,7 +76,7 @@ const requireScope = (
   required: IntegrationScope,
 ): void => {
   if (!hasScope(principal, required))
-    throw new ForbiddenException(`Integration principal 缺少 ${required}`);
+    throw new IntegrationScopeDenied(required);
   requireIntegrationTenant(principal.tenantId);
 };
 
@@ -700,7 +701,16 @@ export class IntegrationService {
           ? (proposalVersions.get(material.locator.sourceVersionId) ?? 0)
           : 0,
       })),
-      gaps: sourceTask.materialGaps,
+      gaps: sourceTask.materialGaps.map((gap) => ({
+        ...gap,
+        availabilityVersion: sourceTask.materials.some(
+          (material) =>
+            material.requirementId === gap.requirementId &&
+            material.situationCode === gap.situationCode,
+        )
+          ? 1
+          : 0,
+      })),
     });
   }
 

@@ -32,7 +32,10 @@ import {
   type RateLimitActor,
 } from "./rate-limit.service";
 import { IdentityService } from "../identity/identity.service";
-import { requireIntegrationTenant } from "./integration-access";
+import {
+  IntegrationScopeDenied,
+  requireIntegrationTenant,
+} from "./integration-access";
 
 export type IntegrationRequest = {
   method?: string;
@@ -230,7 +233,13 @@ const errorFor = (
       status: 403,
       error: {
         code: "FORBIDDEN",
-        message: "当前身份无权读取该资源",
+        message:
+          exception instanceof IntegrationScopeDenied
+            ? `Integration API 拒绝：当前身份缺少 ${exception.requiredScope} 权限`
+            : "当前身份无权执行该操作",
+        ...(exception instanceof IntegrationScopeDenied
+          ? { requiredScope: exception.requiredScope }
+          : {}),
         retryable: false,
         requiresHuman: true,
       },

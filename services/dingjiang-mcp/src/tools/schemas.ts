@@ -144,6 +144,13 @@ export const compactProgressReceiptDataSchema = z.strictObject({
 export const materialVerifyInput = z
   .object({
     ...materialCreateInput.shape,
+    expectedVersion: z
+      .number()
+      .int()
+      .nonnegative()
+      .describe(
+        "evidence.bundle 的 materials.items 中该材料的 verification.version；不是项目或材料需求可用性版本。",
+      ),
     payload: materialVerificationPayloadSchema,
     reason: z.string().trim().min(5).max(500),
   })

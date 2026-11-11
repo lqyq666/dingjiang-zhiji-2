@@ -1,5 +1,6 @@
 import type { ArgumentsHost, ExecutionContext } from "@nestjs/common";
 import {
+  ForbiddenException,
   ServiceUnavailableException,
   UnauthorizedException,
 } from "@nestjs/common";
@@ -10,6 +11,7 @@ import {
   IntegrationExceptionFilter,
   type IntegrationRequest,
 } from "./integration-http";
+import { IntegrationService } from "./integration.service";
 
 const originalToken = process.env.DINGJIANG_MCP_API_TOKEN;
 const originalBindings = process.env.DINGJIANG_MCP_TOKEN_BINDINGS_JSON;
@@ -36,6 +38,64 @@ afterEach(() => {
 });
 
 describe("Integration HTTP authorization boundary", () => {
+  it.each([true, false])(
+    "reports only server-confirmed missing scopes (scope denial=%s)",
+    async (scopeDenial) => {
+      let exception: unknown = new ForbiddenException(
+        "Bearer secret /internal/path material:write",
+      );
+      if (scopeDenial) {
+        const service = new IntegrationService(
+          {} as never,
+          {} as never,
+          {} as never,
+        );
+        try {
+          await service.createMaterial(
+            {
+              tenantId: "tenant-demo",
+              subjectId: "pmc",
+              role: "PMC",
+              scopes: ["material:read"],
+              projectIds: ["PRJ-A"],
+            },
+            "PRJ-A",
+            {},
+          );
+          throw new Error("Expected a scope rejection");
+        } catch (error) {
+          exception = error;
+        }
+      }
+      let body: unknown;
+      const response = {
+        status: () => response,
+        json: (value: unknown) => {
+          body = value;
+        },
+      };
+      new IntegrationExceptionFilter().catch(exception, {
+        switchToHttp: () => ({
+          getRequest: () => ({ headers: {} }),
+          getResponse: () => response,
+        }),
+      } as ArgumentsHost);
+      expect(body).toMatchObject({
+        error: { code: "FORBIDDEN", retryable: false },
+      });
+      const error = (body as { error: Record<string, unknown> }).error;
+      if (scopeDenial)
+        expect(error).toMatchObject({
+          requiredScope: "material:write",
+          message: expect.stringContaining("material:write"),
+        });
+      else expect(error).not.toHaveProperty("requiredScope");
+      expect(JSON.stringify(body)).not.toMatch(
+        /Bearer|secret|internal\/path|无权读取/,
+      );
+    },
+  );
+
   it("fails closed when the server token is not configured", async () => {
     delete process.env.DINGJIANG_MCP_API_TOKEN;
     const guard = new IntegrationAuthGuard();

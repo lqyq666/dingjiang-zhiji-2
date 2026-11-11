@@ -88,6 +88,73 @@ const principal = (
 });
 
 describe("IntegrationService authorization and current-project derivation", () => {
+  it.each([
+    [null, "CAPACITY_RISK", "ACTIVE", 0],
+    ["REQ-CAPACITY-LOAD", "CAPACITY_RISK", "INACTIVE", 0],
+    ["REQ-OTHER", "CAPACITY_RISK", "ACTIVE", 0],
+    ["REQ-CAPACITY-LOAD", "BOM_DELAY", "ACTIVE", 0],
+    ["REQ-CAPACITY-LOAD", "CAPACITY_RISK", "ACTIVE", 1],
+  ])(
+    "returns the requirement version for %s / %s / %s",
+    async (requirementId, situationCode, status, version) => {
+      const reader = {
+        projectSourceTaskId: vi.fn().mockResolvedValue("SO-A"),
+        evidenceProposalVersions: vi.fn().mockResolvedValue(new Map()),
+        taskMaterials: vi.fn().mockResolvedValue({
+          id: "SO-A",
+          situations: [
+            {
+              code: "CAPACITY_RISK",
+              state: "UNVERIFIED",
+              requirements: [
+                {
+                  id: "REQ-CAPACITY-LOAD",
+                  label: "工时记录",
+                  fulfilled: false,
+                },
+              ],
+            },
+          ],
+          materials: [
+            {
+              id: "M-1",
+              requirementId,
+              situationCode,
+              status,
+              title: "合成材料",
+              note: "未核验",
+              kind: "MANUAL_REFERENCE",
+              locator: null,
+              file: null,
+              verification: {
+                status: "UNVERIFIED",
+                version: 0,
+                verifiedBy: null,
+                verifiedAt: null,
+                note: "",
+              },
+              verificationEligible: false,
+            },
+          ],
+        }),
+      };
+      const service = new IntegrationService(
+        {} as never,
+        {
+          readSnapshot: (read: (value: typeof reader) => unknown) =>
+            read(reader),
+        } as never,
+        {} as never,
+      );
+      const result = await service.materials(principal(), "PRJ-A");
+      expect(result.gaps[0]).toMatchObject({
+        requirementId: "REQ-CAPACITY-LOAD",
+        availabilityVersion: version,
+      });
+      expect(reader.taskMaterials).toHaveBeenCalledTimes(1);
+    },
+  );
+
   it("filters the project list by the token-bound project allowlist", async () => {
     const vs01 = {
       projectList: vi

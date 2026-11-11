@@ -1516,6 +1516,41 @@ describe("dingjiang-mcp protocol", () => {
 });
 
 describe("dingjiang-mcp transport error surface", () => {
+  it("preserves the API-confirmed scope in model-readable tool failures", async () => {
+    const integration = client();
+    integration.getProjectState = vi.fn().mockRejectedValue(
+      new IntegrationClientError({
+        ok: false,
+        correlationId: "6f1c2f7e-1111-4222-8333-444455556666",
+        error: {
+          code: "FORBIDDEN",
+          message: "Integration API 拒绝：缺少 material:write",
+          retryable: false,
+          requiresHuman: true,
+          requiredScope: "material:write",
+        },
+      }),
+    );
+    const response = await createMcpHandler(integration)({
+      jsonrpc: "2.0",
+      id: "missing-scope",
+      method: "tools/call",
+      params: { name: "get_project_state", arguments: { projectId: "PRJ-1" } },
+    });
+    const result = (
+      response as {
+        result: { content: Array<{ text: string }>; isError: boolean };
+      }
+    ).result;
+    expect(result.isError).toBe(true);
+    expect(JSON.parse(result.content[0]!.text)).toMatchObject({
+      code: "FORBIDDEN",
+      requiredScope: "material:write",
+      correlationId: "6f1c2f7e-1111-4222-8333-444455556666",
+    });
+    expect(result).not.toHaveProperty("structuredContent");
+  });
+
   it("classifies transport failures separately from caller input errors", async () => {
     const integration = client();
     const correlationId = "6f1c2f7e-1111-4222-8333-444455556666";

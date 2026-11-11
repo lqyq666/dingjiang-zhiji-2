@@ -43,12 +43,15 @@ const proposalInstruction =
   "AI 归纳出的任何结论一律是 PROPOSAL，不得表述为 FACT、根因或已确认结论。";
 const rateLimitInstruction =
   "收到 RATE_LIMITED 时本轮停止调用，向用户报告 retryAfterSeconds 或等待时间未知。retryable 表示满足等待条件后可另行发起。";
+const permissionInstruction =
+  "权限拒绝只按返回的 message、requiredScope 和 correlationId 解释。requiredScope 是服务端确认缺少的权限；没有此字段时不能推断缺少哪项 Scope，也不能把工具名编造成权限名。不得换身份或反复重试。";
 
 const readOnlyInstructions = [
   factsInstruction,
   "当前 MCP 工具面仅提供只读查询。回答时请引用工具返回的来源定位。",
   proposalInstruction,
   rateLimitInstruction,
+  permissionInstruction,
 ].join("\n");
 
 /** Governance instructions provided in discovery or the legacy handshake. */
@@ -62,6 +65,7 @@ export const serverInstructions = [
   `4. ${rateLimitInstruction}`,
   "5. 根据工具消息或可核对记录区分 MCP 参数校验、测试中转和 Integration API 拒绝。仅凭错误码和 correlationId 无法判断来源。证据不足时说明本次工具调用被拒绝，具体拒绝层尚未确认。",
   "6. 方案定稿仅 OWNER，经验发布仅 EXPERT_REVIEWER。角色由服务端校验。",
+  `7. ${permissionInstruction}`,
 ].join("\n");
 
 export const createMcpToolAccess = (profile: SessionProfile) => {

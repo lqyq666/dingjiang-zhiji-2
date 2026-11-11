@@ -10,6 +10,7 @@ import { resolve } from "node:path";
 import {
   governedCommandResultSchema,
   integrationEvidenceBundleSchema,
+  integrationMaterialListSchema,
   integrationWorkContextSchema,
   integrationWorkspaceResumeSchema,
   workExecutionContextSchema,
@@ -841,6 +842,55 @@ describe.skipIf(!run)(
         精简结果字节: sum(compact, "resultBytes"),
         数据库回执: receipts.rowCount ?? 0,
       });
+    });
+
+    it("returns material availability and the actual missing scope through MCP without writes", async () => {
+      const materials = integrationMaterialListSchema.parse(
+        (await mcp.call("list_traceable_materials", { projectId })).data,
+      );
+      const gap = materials.gaps.find(
+        (item) => item.requirementId === "REQ-CAPACITY-LOAD",
+      );
+      expect(gap?.availabilityVersion).toBe(0);
+      const counts = async () =>
+        (
+          await pool.query(
+            "SELECT (SELECT count(*) FROM vs01_task_materials) AS materials, (SELECT count(*) FROM vs15_governed_material_versions) AS contents, (SELECT count(*) FROM vs15_material_events) AS events, (SELECT count(*) FROM governed_command_receipts) AS receipts",
+          )
+        ).rows;
+      const before = await counts();
+      const correlationId = randomUUID();
+      const rejected = await mcp.call("material.create", {
+        projectId,
+        requestId: randomUUID(),
+        correlationId,
+        expectedVersion: gap!.availabilityVersion,
+        reason: "验证材料权限拒绝且无业务副作用",
+        payload: {
+          workItemId,
+          situationCode: gap!.situationCode,
+          requirementId: gap!.requirementId,
+          materialType: "CONTROLLED_TEXT",
+          displayName: "合成工时记录",
+          sourceMetadata: {
+            sourceType: "HUMAN_PROVIDED",
+            sourceName: "隔离测试记录",
+          },
+          safeSummary: "待核验的合成工时记录",
+          controlledTextContent: "仅供隔离测试，尚未人工核验。",
+        },
+      });
+      expect(rejected).toMatchObject({
+        isError: true,
+        failure: {
+          code: "FORBIDDEN",
+          requiredScope: "material:write",
+          correlationId,
+          message: "Integration API 拒绝：当前身份缺少 material:write 权限",
+          retryable: false,
+        },
+      });
+      expect(await counts()).toEqual(before);
     });
 
     it("preserves multiline progress verbatim through persistence, replay and independent readback", async () => {
