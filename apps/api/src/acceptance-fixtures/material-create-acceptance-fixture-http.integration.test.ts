@@ -108,6 +108,7 @@ integrationDescribe("material.create acceptance fixture HTTP read seam", () => {
       requirementId: fixture.requirement.id,
       label: "关键产线负荷与工时记录",
       status: fixture.requirement.status,
+      availabilityVersion: fixture.requirement.expectedVersion,
     });
   });
 

@@ -156,7 +156,7 @@ const operationTools: ToolSeed[] = [
   {
     name: "material.verify",
     description:
-      "用户核对具体材料内容后，由有 material:verify 权限的 PMC 记录核验或退回。先通过 get_material_preview 读取该材料的 verification.version 作为 expectedVersion，并展示内容与来源；不能使用项目版本或材料需求可用性版本，不得以 AI 判断冒充人工核验。",
+      "用户核对具体材料内容后，由有 material:verify 权限的 PMC 记录核验或退回。先通过 evidence.bundle 的 materials.items 按材料 ID 取 verification.version 作为 expectedVersion，并展示可读取的内容与来源；兼容工具面也可用 get_material_preview。不能使用项目版本或材料需求可用性版本，不得以 AI 判断冒充人工核验。",
     inputSchema: z.toJSONSchema(materialVerifyInput),
   },
   {
@@ -349,7 +349,7 @@ const compatibilitySeeds: ToolSeed[] = [
   {
     name: "material.create",
     description:
-      "由具备 material:write 的 PMC 在授权项目与事项中登记首份待核验材料。先查 list_traceable_materials，按 situationCode 和 requirementId 取 gaps[].availabilityVersion 填 expectedVersion：0 表示无匹配 ACTIVE 材料，1 表示已有，当前命令不允许重复登记。不得用 work.operations 的项目 version、核验版本或材料数量代替；未取得该字段先停止，不猜版本。不会创建 Evidence、推进事项或确认业务结论。首版不上传文件。",
+      "由具备 material:write 的 PMC 在授权项目与事项中登记首份待核验材料。先查 evidence.bundle 的 materials.gaps，按 situationCode 和 requirementId 取 availabilityVersion 填 expectedVersion；兼容工具面也可用 list_traceable_materials.gaps。0 表示无匹配 ACTIVE 材料，1 表示已有，当前命令不允许重复登记。不得用 work.operations 的项目 version、核验版本或材料数量代替；未取得该字段先停止，不猜版本。不会创建 Evidence、推进事项或确认业务结论。首版不上传文件。",
     inputSchema: {
       type: "object",
       properties: {
@@ -359,7 +359,7 @@ const compatibilitySeeds: ToolSeed[] = [
           type: "integer",
           minimum: 0,
           description:
-            "目标材料需求在 list_traceable_materials.gaps 中的 availabilityVersion；不是项目版本。",
+            "目标材料需求在 evidence.bundle.materials.gaps 中的 availabilityVersion；不是项目版本。",
         },
         reason: { type: "string", minLength: 3, maxLength: 500 },
         correlationId: { type: "string", format: "uuid" },

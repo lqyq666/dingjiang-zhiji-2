@@ -149,7 +149,7 @@ export const materialVerifyInput = z
       .int()
       .nonnegative()
       .describe(
-        "get_material_preview 返回的 material.verification.version；不是项目或材料需求可用性版本。",
+        "evidence.bundle 的 materials.items 中该材料的 verification.version；不是项目或材料需求可用性版本。",
       ),
     payload: materialVerificationPayloadSchema,
     reason: z.string().trim().min(5).max(500),
