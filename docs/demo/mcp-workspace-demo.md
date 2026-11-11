@@ -2,57 +2,56 @@
 
 一个负责交期的员工要恢复延期工单，找出下一动作和对应证据，再登记一条可回读的进度。同一项写操作由只读身份和授权身份分别发起，以验证 API 对两种身份的处理。
 
+## 作品展示版
+
+`showcase-v1` 固定源码、合成数据和演示指南，沿用 `4a9ead1` 已验收的运行代码。演示从订单延期交接开始，展示如何找到证据、拒绝无权写入、保存进展并回读原文。 [基线提交](https://github.com/lqyq666/dingjiang-zhiji-2/commit/4a9ead16c2155f6402efb571cf69e8dd280d6faa) · [基线 CI](https://github.com/lqyq666/dingjiang-zhiji-2/actions/runs/42981087233)
+
+- **脚本回放**使用预设调用顺序，走实际 stdio、Streamable HTTP/OAuth、Integration API 与临时 PostgreSQL。
+- **真实 Agent 调用**由已登录的宿主根据输入选择工具。已有 Codex CLI 评测的完整预期为 7/10。 [真实 Agent 记录](../evals/agent-results.md#候选两轮复测)
+- **未验收**的能力包括真人试用、WorkBuddy 模型任务、生产部署和企业身份联调。
+
 ## 运行
 
-准备 Node.js 22.19+、pnpm 11 和本机 Docker。在仓库根目录执行
+在 Node.js 24、pnpm 11.19.0 和本机 Docker 的环境中，从独立目录检出展示版。
 
 ```bash
+git clone --branch showcase-v1 --single-branch https://github.com/lqyq666/dingjiang-zhiji-2.git
+cd dingjiang-zhiji-2
+git describe --tags --exact-match HEAD
 pnpm install --frozen-lockfile
 pnpm demo:mcp
 ```
 
-脚本会构建 API 和 MCP，启动仅绑定到 loopback 的临时 PostgreSQL，并在临时库中装载合成订单 `SO-202608128`。首次运行时 Docker 会按需拉取与本地开发相同的 PostgreSQL 镜像。演示凭据和工作目录由程序临时生成。 [回放脚本](../../scripts/demo/mcp-workspace.mjs)
-
-## 一次实跑的节选
-
-```text
-3. 恢复延期项目并读取证据
-   工单  "SO-202608128"
-   阶段  "定下解决方案"
-   下一动作  "形成 BOM 治理方案"
-   动作分类  "PROPOSAL"
-   来源位置  "orders.csv · 订单明细 · row 2"
-
-4. 只读身份提交进度
-   结果  "PERMISSION_DENIED"
-
-5. 授权 PMC 提交进度并回读
-   同一请求返回原回执  true
-   旧版本提交  "STALE_VERSION"
-   数据库回执  1
-   MCP 回读  "已核对订单预计交期，准备与采购复核到料时间。"
-
-6. 远程 MCP 经 OAuth 拦截与写入回读
-   只读工具数  7
-   数据库回执  1
-   MCP 回读  "通过 OAuth 授权的远程 MCP 已复核采购到料时间。"
-```
-
-回放与集成测试共用同一套实际工具调用和断言。 [真实端到端用例](../../apps/api/src/integration/real-e2e.integration.test.ts)
+脚本构建 API 与 MCP，启动仅绑定到本机的临时 PostgreSQL，并装载合成订单 `SO-202608128`。首次运行时 Docker 会按需拉取 PostgreSQL 镜像。 [回放脚本](../../scripts/demo/mcp-workspace.mjs)
 
 ## 终端演示顺序
 
-1. 打开仓库首页，说明场景是订单延期交接。从终端运行 `pnpm demo:mcp`。
-2. 停在项目恢复输出，展示来源版本和行号，再说明 `PROPOSAL` 是待确认的下一步。
-3. 展示只读身份的拒绝结果、授权提交和同一请求的重放。最后停在数据库回执数与 MCP 回读的进度。
+开场展示仓库的系统图和终端输出的 `showcase-v1`。运行 `pnpm demo:mcp` 时，把画面标为「脚本回放」。脚本结束后会一次打印记录，可以按以下顺序切换画面。
 
-## 从 Agent 宿主体验
+1. **第 3 节，找证据。** 展示延期订单、`SRC-ORDERS-V1` 和 `orders.csv · 订单明细 · row 2`。说明下一动作标记为 `PROPOSAL`，需要业务人员判断。
+2. **第 4 节，验证权限。** 同一进展命令由只读身份发出时，结果为 `PERMISSION_DENIED`。
+3. **第 5、6 节，断连后核对。** 测试中转丢弃已提交的响应。展示重放前已有回执、同一请求返回原回执、数据库只有一条进展和一份回执。停在独立回读的原句「已核对订单预计交期，准备与采购复核到料时间。」
+4. **第 8 节，远程接入。** 展示 OAuth 只读工具面、授权写入后的回执和独立回读。
 
-可按接入说明连接 WorkBuddy 或其他 MCP 宿主，然后用任务集中的 `ctx-01` 检查自然语言能否触发项目恢复。这里的命令行回放验证真实协议、API 和落库，宿主选工具的准确率来自独立的任务执行记录。 [宿主接入](../../services/dingjiang-mcp/README.md) · [Agent 任务集和记录口径](../../services/dingjiang-mcp/evals/agent/README.md)
+## 非开发者试用
 
-## 候选版验收记录
+演示者在展示版目录运行 `pnpm demo:mcp --workbuddy`，在已登录的 WorkBuddy 中打开命令输出的候选项目目录，使用项目级 `dingjiang_candidate` 连接器。试用者只需在对话窗口操作。试用结束后由演示者按 Ctrl+C，运行器清理临时数据库和带凭证的配置文件。 [WorkBuddy 项目级配置](https://www.codebuddy.ai/docs/zh/workbuddy/From-Beginner-to-Expert-Guide/Function-Description/MCP-Guide)
 
-`pnpm demo:mcp` 用合成订单运行真实 stdio 和 Streamable HTTP/OAuth MCP 进程、Integration API 与临时 PostgreSQL。回放连接旧版 `initialize` 和新版 `server/discover`，读取工具列表，经 `workspace.resume` 返回授权项目、事实、来源版本和行号。下一动作标记为 `PROPOSAL`。只读写入被拒绝，授权提交可回读，同一请求重放只留下一个回执。 [回放断言](../../apps/api/src/integration/real-e2e.integration.test.ts)
+1. 询问「请告诉我合成订单 SO-202608128 的当前阶段，以及交期证据在哪份文件哪一行。这次只查看。」预期读到「定下解决方案」和 `orders.csv` 第 2 行。
+2. 请求「请在『解决订单延期问题』的『产能负荷核对』事项上记录『已核对订单预计交期，准备与采购复核到料时间。』。请先让我核对目标和原句，等我确认后再提交。」由试用者本人确认。
+3. 请求「请重新查询这项进展，并按原文回读。」核对文字与标点，记录是否有未经确认的写入。
+
+每人记一行 `日期 | 试用编号 | 版本和宿主 | 完成到哪一步 | 原文是否一致 | 本人一句反馈 | PASS / FAIL / NOT_RUN`。来源正确、仅在确认后写入、独立回读逐字一致才记为 `PASS`。当前真人试用为 **NOT_RUN**。
+
+## 验收与复现
+
+### 进展文字核对
+
+本轮在 `4a9ead1` 重跑 `pnpm demo:mcp`，通过现有断言。stdio 用例把命令中的进展原句与数据库事项、进展事件和独立回读逐字比对。OAuth HTTP 用例核对完整与精简回读，均保留句中文字和标点。输入契约会修剪首尾空白。 [端到端断言](../../apps/api/src/integration/real-e2e.integration.test.ts) · [输入契约](../../packages/contracts/src/work-execution.ts)
+
+复核既有两轮 Agent 轨迹，六次获准写入的命令、数据库进展事件与独立回读均与固定输入相同。测试中转会拦截不符合预期原文的写入。同名事项场景曾在澄清答复中改写拟写内容，未发生写入。 [两轮复测](../evals/agent-results.md#候选两轮复测)
+
+### 工程验证
 
 本地候选的验证命令如下。集成运行器覆盖五层，架构检查可独立运行。MCP 契约评测用确定性 mock 覆盖两种协议和两套工具面。 [权限矩阵](../../apps/api/src/integration-http.integration.test.ts)
 
@@ -72,12 +71,6 @@ pnpm demo:mcp --agent --model <模型名称> --codex <Codex-CLI-可执行文件>
 ```
 
 运行目录的 `plan.json` 记录 Git 提交、宿主版本、配置的模型及任务版本。 `outcomes.json` 记录原始输入、工具调用、业务回执和自动检查结果。结合最终回答按场景验收规则复核，允许等价调用路线。自然语言场景的初始输入不提供 ID、版本或指纹。需要确认时使用合成用户的确认语句，完整命令场景单列。可重复指定 `--case` 运行部分场景。单独运行旧版本场景时，夹具会先记录一条进展以制造版本差异，该动作单独记入结果。 [任务变体](../../services/dingjiang-mcp/evals/agent/demo-cases.json)
-
-```bash
-pnpm demo:mcp --workbuddy
-```
-
-在 WorkBuddy 打开命令输出的候选项目目录，选择该项目下的 `dingjiang_candidate` 连接器。项目级配置绑定当次构建、临时 API 与合成测试身份。用 Ctrl+C 结束演示。正常退出时运行器清理临时数据库和带演示凭证的配置文件。 [WorkBuddy 项目级配置](https://www.codebuddy.ai/docs/zh/workbuddy/From-Beginner-to-Expert-Guide/Function-Description/MCP-Guide)
 
 ### 写入目标定位评测
 
