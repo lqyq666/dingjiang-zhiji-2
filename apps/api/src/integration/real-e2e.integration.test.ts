@@ -886,7 +886,8 @@ describe.skipIf(!run)(
           code: "FORBIDDEN",
           requiredScope: "material:write",
           correlationId,
-          message: "Integration API 拒绝：当前身份缺少 material:write 权限",
+          message:
+            "Integration API 拒绝：当前身份缺少 material:write 权限。本次拒绝不代表版本、指纹或其他业务校验已通过。",
           retryable: false,
         },
       });

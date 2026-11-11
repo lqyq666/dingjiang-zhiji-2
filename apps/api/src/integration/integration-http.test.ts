@@ -4,7 +4,7 @@ import {
   ServiceUnavailableException,
   UnauthorizedException,
 } from "@nestjs/common";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   IntegrationAuthGuard,
@@ -45,10 +45,12 @@ describe("Integration HTTP authorization boundary", () => {
         "Bearer secret /internal/path material:write",
       );
       if (scopeDenial) {
+        const command = { execute: vi.fn() };
         const service = new IntegrationService(
           {} as never,
           {} as never,
           {} as never,
+          command as never,
         );
         try {
           await service.createMaterial(
@@ -66,6 +68,7 @@ describe("Integration HTTP authorization boundary", () => {
         } catch (error) {
           exception = error;
         }
+        expect(command.execute).not.toHaveBeenCalled();
       }
       let body: unknown;
       const response = {
@@ -87,7 +90,8 @@ describe("Integration HTTP authorization boundary", () => {
       if (scopeDenial)
         expect(error).toMatchObject({
           requiredScope: "material:write",
-          message: expect.stringContaining("material:write"),
+          message:
+            "Integration API 拒绝：当前身份缺少 material:write 权限。本次拒绝不代表版本、指纹或其他业务校验已通过。",
         });
       else expect(error).not.toHaveProperty("requiredScope");
       expect(JSON.stringify(body)).not.toMatch(
