@@ -1316,7 +1316,7 @@ describe.skipIf(!run)(
           .find((entry) => entry.title === "形成 BOM 治理方案");
         expect(item).toBeDefined();
         const inputText =
-          "  BOM 变更记录：物料 A 替换为物料 B。\n  核对范围：仅为合成测试，不代表生产批准。✅  ";
+          "  BOM 变更记录：物料 A 替换为物料 B。\n  核对范围：仅为合成测试，不代表生产批准。🚚  ";
         const storedText = inputText.trim();
         const command = {
           projectId,
@@ -1374,7 +1374,7 @@ describe.skipIf(!run)(
         ).not.toHaveProperty("materialPreview");
         expect(
           JSON.stringify((await mcp.call("workspace.resume")).data),
-        ).not.toContain(storedText);
+        ).not.toContain(JSON.stringify(storedText));
         const afterRead = await pool.query(
           "SELECT event_type FROM vs15_material_events WHERE material_id = $1",
           [materialId],
@@ -1515,6 +1515,24 @@ describe.skipIf(!run)(
           (await writer.call("material.verify", verifyCommand)).data,
         );
         expect(verified.data.verification.status).toBe("VERIFIED");
+        // An otherwise exact quote with a UTF-8 byte offset must not be accepted.
+        expect(
+          await writer.call("evidence.propose", {
+            ...proposalCommand,
+            requestId: randomUUID(),
+            correlationId: randomUUID(),
+            payload: {
+              ...proposalCommand.payload,
+              exactSpan: {
+                ...proposalCommand.payload.exactSpan,
+                end: Buffer.byteLength(body.contentPreview!, "utf8"),
+              },
+            },
+          }),
+        ).toMatchObject({
+          isError: true,
+          failure: { code: "INVALID_REQUEST" },
+        });
         const proposed = evidenceProposeResultSchema.parse(
           (await writer.call("evidence.propose", proposalCommand)).data,
         );
