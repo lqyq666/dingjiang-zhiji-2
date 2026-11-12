@@ -270,6 +270,8 @@ business 面 13 个、compatibility 面 23 个，去重 28 个；下表按读 / 
 
 正文存在、授权可读、VERIFIED、正式 FACT 是四个不同条件。核验使用 `material.verification.version`；提案使用 `material.evidenceProposalVersion`；提案确认使用 `proposal.review.version`（尚未审核时为 0）。创建契约会裁去正文首尾空白，内部换行、空格和标点保留；引用以独立回读正文为准，偏移采用 JavaScript UTF-16 字符位置，不是 UTF-8 字节。完整合成流程及真实宿主边界见 [Demo](../../docs/demo/mcp-workspace-demo.md) 与 [验收结果](../../docs/evals/agent-results.md)。
 
+`evidence.propose` 的 `limitations` 会原样进入正式证据，应填写确认后仍成立的适用边界，例如仅为合成记录、不证明生产批准。当前待确认、尚非 FACT 等流程状态在对话中说明，避免确认后留下过时文字；已有证据的保存和不可变规则不变。
+
 `work.execute` 必须先读取 `work.operations` 的 version、stateFingerprint 和 allowedActions。返回里还有 `approvalRequiredActions`：这些动作需要可信人工控制台签发的一次性授权记录（`production_human_approvals`，绑定身份、requestId、项目、内容指纹与 expectedVersion，10 分钟过期、单次消费）。宿主用它决定何时向人确认，但**它只是信号**——服务端仍以那张表为准，模型自述与客户端声明都不参与判定。用户明确确认后记录原话；已知字段由助手关联。相同请求重放返回原回执，不重复执行。状态过期拒绝覆盖；超时保留原请求核对。版本、状态、不可覆盖来源及审计同事务提交。
 
 新增权限不会自动授予旧 token：PMC 需要 workitem:write；材料核验/证据确认分别需要 material:verify / evidence:confirm；OWNER 定稿需要 project:approve；EXPERT_REVIEWER 发布需要 experience:publish。新事件必须有明确的预留项目白名单项，例如 PRJ-SO-202608136，workspace.events 才会提供入口。现有项目继续使用原 ID。

@@ -7,17 +7,17 @@
 真实 WorkBuddy 使用现有运行器的两个固定身份入口，每条命令都启动新的本机临时数据库：
 
 ```bash
-pnpm demo:mcp --workbuddy --suite material-flow --case material-authorized --output <新的成功场景目录>
-pnpm demo:mcp --workbuddy --suite material-flow --case material-restricted --output <新的拒绝场景目录>
+pnpm demo:mcp --workbuddy --suite material-flow --input literal --case material-authorized --output <新的成功场景目录>
+pnpm demo:mcp --workbuddy --suite material-flow --input literal --case material-restricted --output <新的拒绝场景目录>
 ```
 
-打开输出的独立工作区，通过候选 MCP 执行 [固定原话与判定规则](../../services/dingjiang-mcp/evals/agent/demo-cases.json) 中 `materialFlowCases`。每场执行一次；仅实际缺陷修复后允许一次事先固定的定向复验，保留所有记录。运行器通过原有领域命令创建项目与前置事实，使用原生“形成 BOM 治理方案”事项、BOM_DELAY 与 REQ-BOM-CHANGE，不通过 SQL 重命名事项或跳过业务 gate。成功场景使用独立合成 PMC 身份，受限场景保留缺少 `material:write` 的原身份，模型不能自行切换。
+打开输出的独立工作区，通过候选 MCP 执行 [固定原话与判定规则](../../services/dingjiang-mcp/evals/agent/demo-cases.json) 中 `materialFlowCases`。`--input literal` 选择版本 1 的 `literalPrompt`：用 JSON 字符串表示正文换行和缩进，解码后的原文与旧任务相同；外层引号和围栏不是正文。生成的 `plan.json` 固定实际输入、候选与版本。省略此参数仍使用原自然语言输入及原评分，不追溯修改旧结果。每场执行一次；仅实际缺陷修复后允许一次事先固定的定向复验，保留所有记录。运行器通过原有领域命令创建项目与前置事实，使用原生“形成 BOM 治理方案”事项、BOM_DELAY 与 REQ-BOM-CHANGE，不通过 SQL 重命名事项或跳过业务 gate。成功场景使用独立合成 PMC 身份，受限场景保留缺少 `material:write` 的原身份，模型不能自行切换。
 
 成功场景先登记待核验材料，再开新会话，仅按材料名称请求原文和来源，不携带原始正文。先核对数据库尚无核验或正式证据，再由测试驱动发送预先固定的合成确认，分别推进核验和提案确认。最终同时核对宿主工具轨迹、材料正文、来源版本、UTF-16 引用区间、核验事件、提案、正式证据和回执。正文创建时裁去首尾空白，独立回读保留内部换行与空格；不能拿摘要或旧对话充当服务端原文。
 
 这是隔离环境中的合成审批测试，不是真人试用，不代表生产人工授权已验收。生产审批、角色、Scope、租户、项目归属、幂等与版本规则保持不变。实际候选与全部宿主结果以 [验收摘要](../evals/agent-results.md) 为准。
 
-录制时分别展示登记后的 UNVERIFIED、无正文输入的新会话回读、确认前零核验/零正式证据、两个合成确认和最终独立查询。核对文本需同时保留预设输入、宿主实际提交的输入、命令载荷及数据库正文：本次 WorkBuddy 输入链路移除了第二行开头两个空格，不能把服务器对实际载荷的准确保存宣传成端到端字节不变。宿主还可能自行写本地记忆；任务说明不是工具沙箱，完整结果保留这些额外调用，不算作“仅用 MCP”通过。
+录制时分别展示登记后的 UNVERIFIED、无正文输入的新会话回读、确认前零核验/零正式证据、两个合成确认和最终独立查询。核对文本需同时保留预设输入、宿主实际提交的输入、命令载荷及数据库正文。旧自然语言输入被 WorkBuddy 移除了第二行开头两个空格，原结果仍为 PARTIAL；后续 JSON 原文变体在真实宿主中保留了这两个空格，不能推广为任意宿主输入均逐字不变。核对类型时看显式预览的 `materialType`；证据 `limitations` 只写确认后仍成立的边界，当前待确认状态留在对话中。新工作区说明要求完成回读后在对话汇报并停止，不写本地记忆，但它仍不是工具沙箱。 [本次限定复验](../evals/agent-results.md#原文输入与宿主收尾的限定复验)
 
 一个负责交期的员工要恢复延期工单，找出下一动作和对应证据，再登记一条可回读的进度。同一项写操作由只读身份和授权身份分别发起，以验证 API 对两种身份的处理。
 
@@ -27,7 +27,7 @@ pnpm demo:mcp --workbuddy --suite material-flow --case material-restricted --out
 
 - **脚本回放**使用预设调用顺序，走实际 stdio、Streamable HTTP/OAuth、Integration API 与临时 PostgreSQL。
 - **真实 Agent 调用**由已登录的宿主根据输入选择工具。已有 Codex CLI 评测的完整预期为 7/10；后续 WorkBuddy 桌面运行已验证进展写入与新会话回读。 [真实 Agent 记录](../evals/agent-results.md)
-- **未验收**的能力包括真人试用、WorkBuddy 材料到证据的完整业务闭环、生产部署和企业身份联调。
+- **未验收**的能力包括真人试用、生产部署和企业身份联调。固定旧标签不包含后续材料改动；后续候选已完成 WorkBuddy 合成材料到证据闭环，需按上方专用入口和对应验收版本展示。
 
 `showcase-v1` 标签保持不变。进展回归对应 `78d70c75e154b0866cfec5a2a165d139cbdbf9fb`；MCP 专用任务与材料拒绝说明对应 `ebcc1ccec0d77c429216e60958b0b66825437b4e`。复现时检出对应候选再运行宿主入口，旧标签不包含后续说明。 [桌面运行边界与各轮结果](../evals/agent-results.md#workbuddy-桌面真实任务)
 
