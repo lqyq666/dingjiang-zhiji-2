@@ -59,6 +59,25 @@ const declaresGovernedWriteEnvelope = (tool: ToolDescriptor): boolean => {
 };
 
 describe("agent eval task set", () => {
+  it("keeps literal material inputs identical to the original task body", () => {
+    const plan = JSON.parse(
+      readFileSync(join(process.cwd(), "evals/agent/demo-cases.json"), "utf8"),
+    ) as {
+      materialFlowLiteralVersion: string;
+      materialFlowCases: Array<{ prompt: string; literalPrompt: string }>;
+    };
+    expect(plan.materialFlowLiteralVersion).toBe("1");
+    expect(plan.materialFlowCases).toHaveLength(2);
+    for (const entry of plan.materialFlowCases) {
+      const original = /原文是：\n([\s\S]+)\n不要提前/.exec(entry.prompt)?.[1];
+      const encoded = /```json\n([\s\S]+)\n```/.exec(entry.literalPrompt)?.[1];
+      expect(original).toContain("\n  核对范围：");
+      expect(encoded).toBeDefined();
+      expect(JSON.parse(encoded!)).toBe(original);
+      expect(entry.literalPrompt).toContain("不要提前核验或生成正式证据");
+    }
+  });
+
   const { tasks } = JSON.parse(
     readFileSync(join(process.cwd(), "evals/agent/tasks.json"), "utf8"),
   ) as {

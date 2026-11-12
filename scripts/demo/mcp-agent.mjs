@@ -18,6 +18,7 @@ const { values: options } = parseArgs({
     codex: { type: "string", default: "codex" },
     case: { type: "string", multiple: true },
     suite: { type: "string" },
+    input: { type: "string" },
     output: { type: "string" },
   },
 });
@@ -28,6 +29,8 @@ if (
   throw new Error("使用 --agent --model <模型> 或 --workbuddy。");
 const targetSuite = options.suite === "target-location";
 const materialFlowSuite = options.suite === "material-flow";
+if (options.input && (!materialFlowSuite || options.input !== "literal"))
+  throw new Error("--input literal 仅用于材料闭环的原文代码块变体。");
 if (
   options.suite &&
   !(options.agent && targetSuite) &&
@@ -87,9 +90,14 @@ const plan = await readJson(
 );
 if (tasks.version !== plan.baseTaskVersion)
   throw new Error("评测任务版本与演示变体不一致。");
-const cases = (materialFlowSuite ? plan.materialFlowCases : plan.cases).filter(
-  (entry) => !options.case || options.case.includes(entry.id),
-);
+const cases = (materialFlowSuite ? plan.materialFlowCases : plan.cases)
+  .filter((entry) => !options.case || options.case.includes(entry.id))
+  .map((entry) => {
+    if (options.input !== "literal") return entry;
+    if (!entry.literalPrompt)
+      throw new Error("该场景没有固定的原文代码块输入。");
+    return { ...entry, prompt: entry.literalPrompt };
+  });
 if (
   !cases.length ||
   options.case?.some((id) => !cases.some((entry) => entry.id === id))
@@ -1015,6 +1023,10 @@ const runWorkBuddy = async (origin) => {
           worktreeClean,
           suite: "material-flow",
           variantVersion: plan.materialFlowVersion,
+          inputVariant: options.input ?? "natural",
+          ...(options.input === "literal"
+            ? { literalInputVersion: plan.materialFlowLiteralVersion }
+            : {}),
           cases,
           host: "WorkBuddy",
           model: "collect from actual host",
@@ -1038,6 +1050,7 @@ const runWorkBuddy = async (origin) => {
       "",
       "本目录仅用于通过 dingjiang_candidate 完成用户授权的合成业务任务。",
       "直接发现并调用该 MCP 的工具；项目、事项与材料以授权查询结果为准。",
+      "完成标准：正式命令回执与独立回读一致后，在当前对话汇报并停止；记录由服务端保存。全程（含收尾）仅使用工具发现与 dingjiang_candidate，不调用本地 Read、Write、Edit、终端或其他连接器；不创建或更新本地记忆、报告及身份文件。已注入的任务说明足以开始。",
       "开发仓库的本地控制面预检不适用于此目录。无需枚举目录、读取配置或调用本地文件、终端工具；连接不可用时报告阻碍。",
       "新命令的 requestId 与 correlationId 直接填写不同的合法 UUID，无需终端生成。结果未知时保留完整原命令和原 requestId。",
       "业务确认与服务端权限规则仍按工具契约执行，试用说明不授予额外权限。",

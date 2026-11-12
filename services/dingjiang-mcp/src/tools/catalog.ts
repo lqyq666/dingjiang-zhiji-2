@@ -263,7 +263,7 @@ const compatibilitySeeds: ToolSeed[] = [
   {
     name: "get_material_preview",
     description:
-      "用户要求查看材料预览或摘要时使用。用列表中的 items[].id 作为 materialId，即使列表显示无附件也需查询。bodyAvailable=true 时从 contentPreview 读取授权正文，CONTROLLED_TEXT 不需要附件；否则说明正文不可读，不以摘要或对话记忆代替。结果同时带来源与核验状态，可读不代表已核验。",
+      "用户要求查看材料预览或摘要时使用。用列表中的 items[].id 作为 materialId，即使列表显示无附件也需查询。bodyAvailable=true 时从 contentPreview 读取授权正文，CONTROLLED_TEXT 不需要附件；否则说明正文不可读，不以摘要或对话记忆代替。实际材料类型看预览 materialType；列表 kind 是兼容分类，CONTROLLED_TEXT 的 kind=MANUAL_REFERENCE 正常，不是登记错误。结果同时带来源与核验状态，可读不代表已核验。",
     inputSchema: {
       type: "object",
       properties: {
@@ -578,7 +578,13 @@ const compatibilitySeeds: ToolSeed[] = [
               additionalProperties: false,
             },
             reasoning: { type: "string", minLength: 3, maxLength: 4000 },
-            limitations: { type: "string", minLength: 3, maxLength: 1000 },
+            limitations: {
+              type: "string",
+              minLength: 3,
+              maxLength: 1000,
+              description:
+                "写证据确认后仍成立的适用边界，例如仅为合成记录、不证明生产批准。此字段会原样保存到正式证据；当前待确认、尚非 FACT 等流程状态应在对话中说明，不写入 limitations。",
+            },
           },
           required: [
             "workItemId",
@@ -634,7 +640,7 @@ const businessOnlySeeds: ToolSeed[] = [
   {
     name: "evidence.bundle",
     description:
-      "读取授权项目的事实证据、材料核验、SourceVersion 定位、缺口与证据提案。需要核对一份材料原文时同时传 materialId，从 materialPreview.contentPreview 独立读取；bodyAvailable=false 时不得用摘要或对话记忆冒充正文。可读不代表已核验，只有用户核对该正文与来源后才能按权限记录核验。底稿保留当前和最近确认版本。",
+      "读取授权项目的事实证据、材料核验、SourceVersion 定位、缺口与证据提案。需要核对一份材料原文时同时传 materialId，从 materialPreview.contentPreview 独立读取；bodyAvailable=false 时不得用摘要或对话记忆冒充正文。实际材料类型看 materialPreview.materialType；列表 kind 是兼容分类，CONTROLLED_TEXT 的 kind=MANUAL_REFERENCE 正常，不是登记错误。可读不代表已核验，只有用户核对该正文与来源后才能按权限记录核验。底稿保留当前和最近确认版本。",
     inputSchema: {
       type: "object",
       properties: {
