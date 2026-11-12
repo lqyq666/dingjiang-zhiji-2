@@ -577,6 +577,8 @@ const run =
       projectId: "PRJ-OTD-001",
       sourceTaskId: context.sourceTask.id,
       bodyAvailable: false,
+      materialType: "MANUAL_REFERENCE",
+      contentPreview: null,
       material,
     });
 

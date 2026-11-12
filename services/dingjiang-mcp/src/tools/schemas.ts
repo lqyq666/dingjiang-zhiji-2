@@ -50,6 +50,7 @@ export const materialInput = identifierInput
     materialId: z.string().trim().min(1).max(120),
   })
   .strict();
+export const evidenceBundleInput = materialInput.partial({ materialId: true });
 export const evidenceInput = identifierInput
   .extend({
     evidenceId: z.string().trim().min(1).max(120),

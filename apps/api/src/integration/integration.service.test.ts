@@ -88,6 +88,40 @@ const principal = (
 });
 
 describe("IntegrationService authorization and current-project derivation", () => {
+  it("propagates a controlled-body read failure rather than claiming the body is unavailable", async () => {
+    const adapter = {
+      materialPreview: vi.fn().mockResolvedValue({
+        status: "BODY_NOT_AVAILABLE",
+        sourceTaskId: "SO-A",
+        data: {
+          material: {
+            kind: "MANUAL_REFERENCE",
+            locator: { sourceVersionId: "SV-1" },
+            file: null,
+          },
+        },
+      }),
+    };
+    const readModel = {
+      controlledMaterialText: vi
+        .fn()
+        .mockRejectedValue(new Error("database unavailable")),
+    };
+    const service = new IntegrationService(
+      adapter as never,
+      { readModel } as never,
+      {} as never,
+    );
+    await expect(
+      service.materialPreview(principal(), "PRJ-A", "1"),
+    ).rejects.toThrow("database unavailable");
+    expect(readModel.controlledMaterialText).toHaveBeenCalledExactlyOnceWith(
+      "PRJ-A",
+      "1",
+      "SV-1",
+    );
+  });
+
   it.each([
     [null, "CAPACITY_RISK", "ACTIVE", 0],
     ["REQ-CAPACITY-LOAD", "CAPACITY_RISK", "INACTIVE", 0],

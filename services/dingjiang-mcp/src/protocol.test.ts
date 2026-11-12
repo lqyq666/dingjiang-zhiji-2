@@ -1654,6 +1654,37 @@ describe("dingjiang-mcp optional constituents", () => {
     expect(integration.getValidationWorkpaper).not.toHaveBeenCalled();
   });
 
+  it("passes an explicit material selector and preserves its controlled body and source in the business bundle", async () => {
+    const integration = client();
+    const materialPreview = {
+      projectId: "PRJ-1",
+      sourceTaskId: stateFixture.sourceTaskId,
+      bodyAvailable: true,
+      materialType: "CONTROLLED_TEXT",
+      contentPreview: "BOM 变更记录：物料 A 替换为物料 B。\n  仅为合成测试。",
+      material: { ...materialFixture, kind: "MANUAL_REFERENCE", file: null },
+    };
+    integration.getEvidenceBundle = vi
+      .fn()
+      .mockResolvedValue({ ...evidenceBundleFixture, materialPreview });
+    const result = await createMcpHandler(integration)({
+      jsonrpc: "2.0",
+      id: "controlled-body",
+      method: "tools/call",
+      params: {
+        name: "evidence.bundle",
+        arguments: { projectId: "PRJ-1", materialId: "M-1" },
+      },
+    });
+    expect(integration.getEvidenceBundle).toHaveBeenCalledExactlyOnceWith(
+      "PRJ-1",
+      "M-1",
+    );
+    expect(result).toMatchObject({
+      result: { structuredContent: { materialPreview } },
+    });
+  });
+
   it.each(["NOT_FOUND", "FORBIDDEN"] as const)(
     "passes a project evidence bundle %s through without fallback reads",
     async (code) => {

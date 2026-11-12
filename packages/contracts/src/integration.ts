@@ -207,6 +207,10 @@ export const integrationMaterialPreviewSchema = z.object({
   projectId: idSchema,
   sourceTaskId: idSchema,
   bodyAvailable: z.boolean(),
+  materialType: z
+    .enum(["MANUAL_REFERENCE", "CONTROLLED_TEXT", "UPLOADED_FILE"])
+    .optional(),
+  contentPreview: z.string().nullable().optional(),
   material: integrationSafeMaterialSchema,
 });
 
@@ -343,6 +347,7 @@ export const integrationEvidenceBundleSchema = z
     materials: integrationMaterialListSchema,
     workpaper: workpaperSummary.nullable(),
     proposals: evidenceProposalReviewListSchema,
+    materialPreview: integrationMaterialPreviewSchema.optional(),
   })
   .strict();
 
@@ -352,7 +357,7 @@ export const integrationWorkspaceResumeSchema = z
       items: z.array(projectStateSummary),
     }),
     ...integrationWorkContextSchema.shape,
-    ...integrationEvidenceBundleSchema.shape,
+    ...integrationEvidenceBundleSchema.omit({ materialPreview: true }).shape,
     context: projectContextSummary.extend({
       sourceTask: contextShape.sourceTask.omit({
         evidence: true,

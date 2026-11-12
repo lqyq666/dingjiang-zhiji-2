@@ -11,6 +11,11 @@ import {
   governedCommandResultSchema,
   integrationEvidenceBundleSchema,
   integrationMaterialListSchema,
+  integrationMaterialPreviewSchema,
+  materialCreateResultSchema,
+  materialVerificationResultSchema,
+  evidenceProposeResultSchema,
+  evidenceConfirmationResultSchema,
   integrationWorkContextSchema,
   integrationWorkspaceResumeSchema,
   workExecutionContextSchema,
@@ -28,6 +33,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { databaseUrl, migrate, resetAndSeed } from "../vs01-db";
 import { Vs01Service } from "../vs01.service";
+import { ReadModelService } from "../read-model/read-model-service";
 
 /**
  * Real end-to-end run: a real API process, a real MCP process, a real
@@ -53,6 +59,8 @@ const mcpHttpEntry = resolve(
 
 const pmcToken = `real-e2e-pmc-${randomUUID()}`;
 const readOnlyToken = `real-e2e-readonly-${randomUUID()}`;
+const materialFlowToken = `real-e2e-material-flow-${randomUUID()}`;
+const foreignTenantToken = `real-e2e-foreign-tenant-${randomUUID()}`;
 const modernMeta = {
   "io.modelcontextprotocol/protocolVersion": "2026-07-28",
   "io.modelcontextprotocol/clientCapabilities": {},
@@ -77,14 +85,18 @@ class McpProcess {
   constructor(
     token: string,
     baseUrl: string,
-    private readonly options: { readOnly?: boolean; modern?: boolean } = {},
+    private readonly options: {
+      readOnly?: boolean;
+      modern?: boolean;
+      surface?: "business";
+    } = {},
   ) {
     this.child = spawn(process.execPath, [mcpEntry], {
       env: {
         ...process.env,
         DINGJIANG_API_BASE_URL: baseUrl,
         DINGJIANG_MCP_API_TOKEN: token,
-        DINGJIANG_MCP_TOOL_SURFACE: "",
+        DINGJIANG_MCP_TOOL_SURFACE: this.options.surface ?? "",
         DINGJIANG_MCP_READ_ONLY: this.options.readOnly ? "1" : "0",
       },
       stdio: ["pipe", "pipe", "pipe"],
@@ -218,6 +230,7 @@ describe.skipIf(!run)(
     let modernMcp: McpProcess;
     let readOnlyMcp: McpProcess;
     let projectId: string;
+    let otherProjectId: string;
     let version: number;
     let stateFingerprint: string;
     let workItemId: string;
@@ -264,6 +277,17 @@ describe.skipIf(!run)(
             sourceTaskId: "SO-202608128",
           })
         ).id;
+        await domain.decideTask("SO-202608136", {
+          actor: "PMC",
+          type: "CONFIRMED",
+          note: "独立项目用于材料隔离回归",
+        });
+        otherProjectId = (
+          await domain.createProject({
+            actor: "PMC",
+            sourceTaskId: "SO-202608136",
+          })
+        ).id;
       } finally {
         await domain.onModuleDestroy();
       }
@@ -273,6 +297,32 @@ describe.skipIf(!run)(
       expect(existsSync(apiEntry)).toBe(true);
 
       process.env.DINGJIANG_MCP_TOKEN_BINDINGS_JSON = JSON.stringify([
+        {
+          token: materialFlowToken,
+          tenantId: "tenant-demo",
+          subjectId: "real-e2e-synthetic-reviewer",
+          role: "PMC",
+          scopes: [
+            "project:read",
+            "workitem:read",
+            "material:read",
+            "material:write",
+            "material:verify",
+            "evidence:read",
+            "evidence:write",
+            "evidence:confirm",
+            "workpaper:read",
+          ],
+          projectIds: [projectId, otherProjectId],
+        },
+        {
+          token: foreignTenantToken,
+          tenantId: "tenant-other",
+          subjectId: "real-e2e-foreign-reader",
+          role: "PMC",
+          scopes: ["project:read", "material:read"],
+          projectIds: [projectId],
+        },
         {
           token: pmcToken,
           tenantId: "tenant-demo",
@@ -1251,5 +1301,354 @@ describe.skipIf(!run)(
         await issuer.close();
       }
     }, 75_000);
+
+    it("reads stored controlled material independently before verification and evidence confirmation", async () => {
+      const writer = new McpProcess(materialFlowToken, baseUrl, {
+        surface: "business",
+      });
+      const reader = new McpProcess(materialFlowToken, baseUrl);
+      try {
+        const operations = workExecutionContextSchema.parse(
+          (await mcp.call("work.operations", { projectId })).data,
+        );
+        const item = operations
+          .project!.phases.flatMap((phase) => phase.tasks)
+          .find((entry) => entry.title === "形成 BOM 治理方案");
+        expect(item).toBeDefined();
+        const inputText =
+          "  BOM 变更记录：物料 A 替换为物料 B。\n  核对范围：仅为合成测试，不代表生产批准。🚚  ";
+        const storedText = inputText.trim();
+        const command = {
+          projectId,
+          requestId: randomUUID(),
+          correlationId: randomUUID(),
+          expectedVersion: 0,
+          reason: "隔离测试登记待核验的 BOM 材料",
+          payload: {
+            workItemId: item!.id,
+            situationCode: "BOM_DELAY",
+            requirementId: "REQ-BOM-CHANGE",
+            materialType: "CONTROLLED_TEXT",
+            displayName: "合成 BOM 变更记录",
+            sourceMetadata: {
+              sourceType: "HUMAN_PROVIDED",
+              sourceName: "隔离测试记录",
+            },
+            safeSummary: "合成变更材料，仅供核验演示",
+            controlledTextContent: inputText,
+          },
+        };
+        const created = await writer.call("material.create", command);
+        expect(created.isError).toBe(false);
+        const material = materialCreateResultSchema.parse(created.data).data;
+        const materialId = material.materialId;
+        const stored = await pool.query(
+          "SELECT controlled_text_content FROM vs15_governed_material_versions WHERE material_id = $1 AND tenant_id = 'tenant-demo'",
+          [materialId],
+        );
+        expect(stored.rows[0].controlled_text_content).toBe(storedText);
+        const preview = await reader.call("get_material_preview", {
+          projectId,
+          materialId,
+        });
+        expect(preview.isError).toBe(false);
+        expect(preview.data).toMatchObject({
+          bodyAvailable: true,
+          contentPreview: storedText,
+          materialType: "CONTROLLED_TEXT",
+          material: {
+            id: materialId,
+            file: null,
+            verificationStatus: "UNVERIFIED",
+          },
+        });
+        const body = integrationMaterialPreviewSchema.parse(preview.data);
+        expect(body.material.locator).toEqual(material.locator);
+        const bundle = integrationEvidenceBundleSchema.parse(
+          (await writer.call("evidence.bundle", { projectId, materialId }))
+            .data,
+        );
+        expect(bundle.materialPreview).toEqual(body);
+        expect(
+          (await writer.call("evidence.bundle", { projectId })).data,
+        ).not.toHaveProperty("materialPreview");
+        expect(
+          JSON.stringify((await mcp.call("workspace.resume")).data),
+        ).not.toContain(JSON.stringify(storedText));
+        const afterRead = await pool.query(
+          "SELECT event_type FROM vs15_material_events WHERE material_id = $1",
+          [materialId],
+        );
+        expect(afterRead.rows).toEqual([{ event_type: "REGISTERED" }]);
+
+        // Fresh HTTP requests exercise the formal boundary, not a test proxy.
+        const deniedScope = await fetch(
+          `${baseUrl}/integration/projects/${projectId}/materials/${materialId}/preview`,
+          { headers: { authorization: `Bearer ${readOnlyToken}` } },
+        );
+        expect(deniedScope.status).toBe(403);
+        const deniedTenant = await fetch(
+          `${baseUrl}/integration/projects/${projectId}/materials/${materialId}/preview`,
+          { headers: { authorization: `Bearer ${foreignTenantToken}` } },
+        );
+        expect(deniedTenant.status).toBe(403);
+        const wrongProject = await reader.call("get_material_preview", {
+          projectId: otherProjectId,
+          materialId,
+        });
+        expect(wrongProject).toMatchObject({
+          isError: true,
+          failure: { code: "NOT_FOUND" },
+        });
+        const scopedReader = new ReadModelService(pool, "tenant-demo");
+        expect(
+          await scopedReader.controlledMaterialText(
+            otherProjectId,
+            materialId,
+            material.locator.sourceVersionId,
+          ),
+        ).toBeNull();
+        expect(
+          await scopedReader.controlledMaterialText(
+            projectId,
+            materialId,
+            "SRC-OTHER-VERSION",
+          ),
+        ).toBeNull();
+        expect(
+          await new ReadModelService(
+            pool,
+            "tenant-other",
+          ).controlledMaterialText(
+            projectId,
+            materialId,
+            material.locator.sourceVersionId,
+          ),
+        ).toBeNull();
+        const other = workExecutionContextSchema.parse(
+          (await writer.call("work.operations", { projectId: otherProjectId }))
+            .data,
+        );
+        const otherItem = other
+          .project!.phases.flatMap((phase) => phase.tasks)
+          .find((entry) => entry.title === item!.title)!;
+        const manualPayload = {
+          ...command.payload,
+          controlledTextContent: undefined,
+        };
+        const manual = materialCreateResultSchema.parse(
+          (
+            await writer.call("material.create", {
+              ...command,
+              projectId: otherProjectId,
+              requestId: randomUUID(),
+              correlationId: randomUUID(),
+              payload: {
+                ...manualPayload,
+                workItemId: otherItem.id,
+                materialType: "MANUAL_REFERENCE",
+              },
+            })
+          ).data,
+        );
+        expect(
+          (
+            await reader.call("get_material_preview", {
+              projectId: otherProjectId,
+              materialId: manual.data.materialId,
+            })
+          ).data,
+        ).toMatchObject({
+          bodyAvailable: false,
+          contentPreview: null,
+          materialType: "MANUAL_REFERENCE",
+        });
+
+        const proposalCommand = {
+          projectId,
+          requestId: randomUUID(),
+          correlationId: randomUUID(),
+          expectedVersion: body.material.evidenceProposalVersion,
+          reason: "按独立回读的原文提出合成证据",
+          payload: {
+            workItemId: item!.id,
+            materialId,
+            claim: "合成记录记载了物料替换",
+            evidenceType: "DOCUMENTED_FACT",
+            sourceObjectId: body.material.locator!.sourceObjectId,
+            sourceVersionId: body.material.locator!.sourceVersionId,
+            exactSpan: {
+              kind: "TEXT_SPAN",
+              start: 0,
+              end: body.contentPreview!.length,
+              exactText: body.contentPreview!,
+            },
+            reasoning: "引用服务端保存的完整合成记录",
+            limitations: "仅为合成演示，不证明生产批准",
+          },
+        };
+        expect(
+          await writer.call("evidence.propose", proposalCommand),
+        ).toMatchObject({ isError: true, failure: { code: "CONFLICT" } });
+        expect(
+          (
+            await pool.query(
+              "SELECT 1 FROM vs32_evidence_proposals WHERE material_id = $1",
+              [materialId],
+            )
+          ).rowCount,
+        ).toBe(0);
+        const verifyCommand = {
+          projectId,
+          requestId: randomUUID(),
+          correlationId: randomUUID(),
+          expectedVersion: body.material.verification.version,
+          reason: "隔离测试驱动已核对原文和来源",
+          payload: {
+            materialId,
+            decision: "VERIFIED",
+            verificationNote:
+              "合成人工核验：内容及来源与独立回读一致，仅供测试",
+          },
+        };
+        const verified = materialVerificationResultSchema.parse(
+          (await writer.call("material.verify", verifyCommand)).data,
+        );
+        expect(verified.data.verification.status).toBe("VERIFIED");
+        // An otherwise exact quote with a UTF-8 byte offset must not be accepted.
+        expect(
+          await writer.call("evidence.propose", {
+            ...proposalCommand,
+            requestId: randomUUID(),
+            correlationId: randomUUID(),
+            payload: {
+              ...proposalCommand.payload,
+              exactSpan: {
+                ...proposalCommand.payload.exactSpan,
+                end: Buffer.byteLength(body.contentPreview!, "utf8"),
+              },
+            },
+          }),
+        ).toMatchObject({
+          isError: true,
+          failure: { code: "INVALID_REQUEST" },
+        });
+        const proposed = evidenceProposeResultSchema.parse(
+          (await writer.call("evidence.propose", proposalCommand)).data,
+        );
+        expect(proposed.data.classification).toBe("PROPOSAL");
+        const beforeConfirm = integrationEvidenceBundleSchema.parse(
+          (await writer.call("evidence.bundle", { projectId, materialId }))
+            .data,
+        );
+        const review = beforeConfirm.proposals.find(
+          (entry) => entry.proposalId === proposed.data.proposalId,
+        )!;
+        expect(review.review).toBeNull();
+        expect(
+          beforeConfirm.evidence.items.some(
+            (entry) => entry.exactSpan?.exactText === storedText,
+          ),
+        ).toBe(false);
+        const confirmCommand = {
+          projectId,
+          requestId: randomUUID(),
+          correlationId: randomUUID(),
+          expectedVersion: review.review?.version ?? 0,
+          reason: "隔离测试驱动确认合成引用及适用边界",
+          payload: {
+            proposalId: review.proposalId,
+            decision: "CONFIRMED",
+            reviewNote: "合成人工确认：引用原文及来源正确，仅为合成记录事实",
+          },
+        };
+        const confirmed = evidenceConfirmationResultSchema.parse(
+          (await writer.call("evidence.confirm", confirmCommand)).data,
+        );
+        const final = integrationEvidenceBundleSchema.parse(
+          (await reader.call("evidence.bundle", { projectId, materialId }))
+            .data,
+        );
+        const fact = final.evidence.items.find(
+          (entry) => entry.id === confirmed.data.evidenceId,
+        );
+        expect(fact).toMatchObject({
+          classification: "FACT",
+          sourceVersionId: material.locator.sourceVersionId,
+          exactSpan: {
+            start: 0,
+            end: storedText.length,
+            exactText: storedText,
+          },
+        });
+        expect(final.materialPreview?.contentPreview).toBe(storedText);
+        for (const [name, originalCommand] of [
+          ["material.create", command],
+          ["material.verify", verifyCommand],
+          ["evidence.propose", proposalCommand],
+          ["evidence.confirm", confirmCommand],
+        ] as const) {
+          expect(
+            (await writer.call(name, originalCommand)).data?.replayed,
+          ).toBe(true);
+        }
+        const effects = (
+          await pool.query(
+            "SELECT (SELECT count(*)::int FROM vs15_material_events WHERE material_id = $1 AND event_type = 'VERIFIED') AS verifications, (SELECT count(*)::int FROM vs32_evidence_proposals WHERE material_id = $1) AS proposals, (SELECT count(*)::int FROM vs32_formal_evidence WHERE proposal_id = $2) AS facts, (SELECT count(*)::int FROM governed_command_receipts WHERE request_id = ANY($3::uuid[])) AS receipts",
+            [
+              materialId,
+              review.proposalId,
+              [
+                command.requestId,
+                verifyCommand.requestId,
+                proposalCommand.requestId,
+                confirmCommand.requestId,
+              ],
+            ],
+          )
+        ).rows[0];
+        expect(effects).toEqual({
+          verifications: 1,
+          proposals: 1,
+          facts: 1,
+          receipts: 4,
+        });
+        record("受控材料独立回读与合成审批证据闭环", {
+          材料正文: storedText,
+          首读状态: "UNVERIFIED",
+          来源版本: material.locator.sourceVersionId,
+          精确引用长度: storedText.length,
+          核验事件: 1,
+          提案: 1,
+          正式证据: 1,
+          命令回执: 4,
+          人工确认性质: "合成测试驱动，不是真人验收",
+        });
+        const domain = new Vs01Service();
+        await domain.onModuleInit();
+        try {
+          await domain.withdrawTaskMaterial(body.sourceTaskId, materialId, {
+            actor: "PMC",
+            reason: "隔离测试核对停用后的正文边界",
+          });
+        } finally {
+          await domain.onModuleDestroy();
+        }
+        expect(
+          (await reader.call("get_material_preview", { projectId, materialId }))
+            .isError,
+        ).toBe(true);
+        expect(
+          await scopedReader.controlledMaterialText(
+            projectId,
+            materialId,
+            material.locator.sourceVersionId,
+          ),
+        ).toBeNull();
+      } finally {
+        await writer.stop();
+        await reader.stop();
+      }
+    });
   },
 );
