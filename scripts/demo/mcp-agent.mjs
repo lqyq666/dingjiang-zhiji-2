@@ -154,7 +154,7 @@ const seed = async () => {
     const projects = [];
     for (const [sourceTaskId, name] of [
       ["SO-202608128", projectName],
-      ["SO-202608136", otherName],
+      ...(materialFlowSuite ? [] : [["SO-202608136", otherName]]),
     ]) {
       await domain.decideTask(sourceTaskId, {
         actor: "PMC",
@@ -1115,7 +1115,9 @@ try {
       VS15_MATERIAL_VAULT_ROOT: join(output, "materials"),
       DINGJIANG_MCP_TOKEN_BINDINGS_JSON: JSON.stringify([
         binding(pmc, "demo-pmc", [primary.id]),
-        binding(multiple, "demo-two-projects", [primary.id, secondary.id]),
+        ...(secondary
+          ? [binding(multiple, "demo-two-projects", [primary.id, secondary.id])]
+          : []),
         ...(materialFlowSuite
           ? [
               {
