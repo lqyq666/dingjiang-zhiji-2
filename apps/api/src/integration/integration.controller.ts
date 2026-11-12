@@ -173,11 +173,16 @@ export class IntegrationController {
   @Get("projects/:id/evidence-bundle")
   async evidenceBundle(
     @Param("id") id: string,
+    @Query("materialId") materialId: string | undefined,
     @Req() request: IntegrationRequest,
   ) {
     return this.success(
       request,
-      await this.integration.evidenceBundle(integrationPrincipal(request), id),
+      await this.integration.evidenceBundle(
+        integrationPrincipal(request),
+        id,
+        materialId,
+      ),
     );
   }
 

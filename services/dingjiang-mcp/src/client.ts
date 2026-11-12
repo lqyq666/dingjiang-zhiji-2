@@ -315,9 +315,9 @@ export class DingjiangIntegrationClient {
     );
   }
 
-  getEvidenceBundle(projectId: string) {
+  getEvidenceBundle(projectId: string, materialId?: string) {
     return this.get(
-      `integration/projects/${encodeURIComponent(projectId)}/evidence-bundle`,
+      `integration/projects/${encodeURIComponent(projectId)}/evidence-bundle${materialId === undefined ? "" : `?materialId=${encodeURIComponent(materialId)}`}`,
       integrationEvidenceBundleSchema,
     );
   }

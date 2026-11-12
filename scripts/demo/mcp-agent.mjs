@@ -27,8 +27,15 @@ if (
 )
   throw new Error("使用 --agent --model <模型> 或 --workbuddy。");
 const targetSuite = options.suite === "target-location";
-if (options.suite && (!options.agent || !targetSuite))
-  throw new Error("--suite 只支持 --agent --suite target-location。");
+const materialFlowSuite = options.suite === "material-flow";
+if (
+  options.suite &&
+  !(options.agent && targetSuite) &&
+  !(options.workbuddy && materialFlowSuite)
+)
+  throw new Error(
+    "--suite 支持 --agent --suite target-location 或 --workbuddy --suite material-flow --case material-authorized|material-restricted。",
+  );
 
 const abort = new AbortController();
 const { signal } = abort;
@@ -80,7 +87,7 @@ const plan = await readJson(
 );
 if (tasks.version !== plan.baseTaskVersion)
   throw new Error("评测任务版本与演示变体不一致。");
-const cases = plan.cases.filter(
+const cases = (materialFlowSuite ? plan.materialFlowCases : plan.cases).filter(
   (entry) => !options.case || options.case.includes(entry.id),
 );
 if (
@@ -88,6 +95,8 @@ if (
   options.case?.some((id) => !cases.some((entry) => entry.id === id))
 )
   throw new Error("未找到指定评测场景。");
+if (materialFlowSuite && cases.length !== 1)
+  throw new Error("材料闭环每次只启动一个固定身份场景，请指定 --case。");
 
 const requireApi = createRequire(join(apiDir, "package.json"));
 const { createPool, migrate, resetAndSeed } = requireApi("./dist/vs01-db.js");
@@ -98,6 +107,7 @@ const { isReadOnlyTool } = requireMcp("./dist/tools/catalog.js");
 const pool = createPool();
 const pmc = randomUUID();
 const multiple = randomUUID();
+const materialReviewer = randomUUID();
 const projectName = "解决订单延期问题";
 const otherName = "交付复核专项";
 const itemName = "产能负荷核对";
@@ -106,6 +116,7 @@ const redact = (text) =>
   text
     .replaceAll(pmc, "[test-credential]")
     .replaceAll(multiple, "[test-credential]")
+    .replaceAll(materialReviewer, "[test-credential]")
     .replaceAll(databaseUrl.href, "[test-database]")
     .replace(/Bearer [A-Za-z0-9._-]+/gi, "Bearer [redacted]")
     .replace(
@@ -156,8 +167,18 @@ const seed = async () => {
       });
       const item = project.phases
         .flatMap((phase) => phase.tasks)
-        .find((task) => task.owner === "PMC" && task.status === "READY");
+        .find((task) =>
+          materialFlowSuite
+            ? task.title === "形成 BOM 治理方案" &&
+              task.owner === "PMC" &&
+              task.status === "READY"
+            : task.owner === "PMC" && task.status === "READY",
+        );
       if (!item) throw new Error("合成项目缺少可记录进展的事项。");
+      if (materialFlowSuite) {
+        projects.push({ id: project.id, itemId: item.id, name: project.name });
+        continue;
+      }
       await pool.query(
         "UPDATE vs01_projects SET name = $1 WHERE tenant_id = $2 AND id = $3",
         [name, "tenant-demo", project.id],
@@ -168,12 +189,13 @@ const seed = async () => {
       );
       projects.push({ id: project.id, itemId: item.id, name });
     }
-    await domain.addTaskMaterial("SO-202608128", {
-      actor: "PMC",
-      situationCode: "CAPACITY_RISK",
-      title: "演示线下工时记录",
-      sourceReference: "合成材料登记",
-    });
+    if (!materialFlowSuite)
+      await domain.addTaskMaterial("SO-202608128", {
+        actor: "PMC",
+        situationCode: "CAPACITY_RISK",
+        title: "演示线下工时记录",
+        sourceReference: "合成材料登记",
+      });
     return projects;
   } finally {
     await domain.onModuleDestroy();
@@ -984,6 +1006,29 @@ const runCases = async (origin, primary, secondary) => {
 };
 
 const runWorkBuddy = async (origin) => {
+  if (materialFlowSuite)
+    await writeFile(
+      join(output, "plan.json"),
+      JSON.stringify(
+        {
+          candidate,
+          worktreeClean,
+          suite: "material-flow",
+          variantVersion: plan.materialFlowVersion,
+          cases,
+          host: "WorkBuddy",
+          model: "collect from actual host",
+          tokens: "未采集",
+          cost: "未采集",
+          approvals: "合成测试驱动确认，不是真人试用或生产授权",
+          humanTrial: "NOT_RUN",
+          maxDirectedRetestsAfterFix: 1,
+        },
+        null,
+        2,
+      ),
+      { flag: "wx" },
+    );
   const folder = join(workspace, ".workbuddy");
   await mkdir(folder);
   await writeFile(
@@ -1020,7 +1065,13 @@ const runWorkBuddy = async (origin) => {
               args: [mcpEntry],
               env: {
                 DINGJIANG_API_BASE_URL: origin + "/api",
-                DINGJIANG_MCP_API_TOKEN: pmc,
+                DINGJIANG_MCP_API_TOKEN:
+                  materialFlowSuite && cases[0].id === "material-authorized"
+                    ? materialReviewer
+                    : pmc,
+                ...(materialFlowSuite
+                  ? { DINGJIANG_MCP_TOOL_SURFACE: "business" }
+                  : {}),
               },
               description: "鼎江候选版，独立合成演示库",
             },
@@ -1065,6 +1116,24 @@ try {
       DINGJIANG_MCP_TOKEN_BINDINGS_JSON: JSON.stringify([
         binding(pmc, "demo-pmc", [primary.id]),
         binding(multiple, "demo-two-projects", [primary.id, secondary.id]),
+        ...(materialFlowSuite
+          ? [
+              {
+                ...binding(
+                  materialReviewer,
+                  "demo-synthetic-material-reviewer",
+                  [primary.id],
+                ),
+                scopes: [
+                  ...scopes,
+                  "material:write",
+                  "material:verify",
+                  "evidence:write",
+                  "evidence:confirm",
+                ],
+              },
+            ]
+          : []),
       ]),
     },
   });

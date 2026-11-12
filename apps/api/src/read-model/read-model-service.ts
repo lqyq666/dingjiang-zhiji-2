@@ -275,6 +275,20 @@ export class ReadModelService {
     });
   }
 
+  async controlledMaterialText(
+    projectId: string,
+    materialId: string,
+    sourceVersionId: string,
+  ) {
+    const result = await this.database.query<{
+      controlled_text_content: string;
+    }>(
+      "SELECT g.controlled_text_content FROM vs01_projects p JOIN vs01_task_materials m ON m.task_id = p.source_task_id AND m.tenant_id = p.tenant_id JOIN vs15_governed_material_versions g ON g.material_id = m.id AND g.tenant_id = m.tenant_id AND g.project_id = p.id AND g.source_version_id = m.source_version_id JOIN vs01_source_versions v ON v.id = g.source_version_id AND v.tenant_id = g.tenant_id AND v.source_object_id = m.source_object_id WHERE p.id = $1 AND p.tenant_id = $2 AND m.id = $3 AND m.source_version_id = $4 AND m.status = 'ACTIVE' AND g.material_type = 'CONTROLLED_TEXT'",
+      [projectId, this.tenantId, materialId, sourceVersionId],
+    );
+    return result.rows[0]?.controlled_text_content ?? null;
+  }
+
   private async readTaskMaterials(id: string) {
     const materialResult = await this.database.query(
       "SELECT m.id, m.situation_code, m.requirement_id, m.title, m.source_reference, m.note, m.kind, m.status, m.source_object_id, m.source_version_id, m.withdrawn_at, m.withdrawn_reason, m.created_by, m.created_at, c.original_name, c.media_type, c.byte_size, c.sha256, c.extraction_status, c.content_preview, c.readable_by_ai, (g.material_id IS NOT NULL) AS verification_eligible, v.verification_status, v.verification_version, v.verified_by, v.verification_note, v.verified_at FROM vs01_task_materials m LEFT JOIN vs15_material_contents c ON c.source_version_id = m.source_version_id AND c.tenant_id = m.tenant_id LEFT JOIN vs15_governed_material_versions g ON g.material_id = m.id AND g.tenant_id = m.tenant_id LEFT JOIN LATERAL (SELECT e.event_type AS verification_status, e.verification_version, e.actor_subject_id AS verified_by, e.reason AS verification_note, e.created_at AS verified_at FROM vs15_material_events e WHERE e.tenant_id = m.tenant_id AND e.material_id = m.id AND e.verification_version IS NOT NULL ORDER BY e.verification_version DESC LIMIT 1) v ON true WHERE m.task_id = $1 AND m.tenant_id = $2 ORDER BY m.created_at, m.id",

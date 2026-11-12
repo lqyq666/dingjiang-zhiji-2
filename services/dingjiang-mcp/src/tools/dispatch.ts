@@ -20,6 +20,7 @@ import {
   compactProgressReceiptDataSchema,
   emptyInput,
   evidenceConfirmInput,
+  evidenceBundleInput,
   evidenceInput,
   evidenceProposeInput,
   experienceInput,
@@ -257,8 +258,10 @@ const workHandlers: Record<string, ToolHandler> = {
 
 const evidenceHandlers: Record<string, ToolHandler> = {
   "evidence.bundle": async (client, input) => {
-    const body = identifierInput.parse(input);
-    return client.getEvidenceBundle(body.projectId);
+    const body = evidenceBundleInput.parse(input);
+    return body.materialId === undefined
+      ? client.getEvidenceBundle(body.projectId)
+      : client.getEvidenceBundle(body.projectId, body.materialId);
   },
   "material.verify": async (client, input) => {
     const { projectId, ...request } = materialVerifyInput.parse(input);

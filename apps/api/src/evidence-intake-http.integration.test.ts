@@ -306,7 +306,9 @@ integrationDescribe(
           integrationMaterialPreviewSchema,
         ).parse(await preview.json()).data,
       ).toMatchObject({
-        bodyAvailable: false,
+        bodyAvailable: true,
+        materialType: "CONTROLLED_TEXT",
+        contentPreview: "测试产线负荷率为 82%。统计周期为 fixture week 1。",
         material: {
           id: materialId,
           file: null,

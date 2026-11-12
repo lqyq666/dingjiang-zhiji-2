@@ -714,7 +714,11 @@ export class IntegrationService {
     });
   }
 
-  async evidenceBundle(principal: IntegrationPrincipal, projectId: string) {
+  async evidenceBundle(
+    principal: IntegrationPrincipal,
+    projectId: string,
+    materialId?: string,
+  ) {
     requireScope(principal, "evidence:read");
     requireProjectAccess(principal, projectId);
     requireScope(principal, "project:read");
@@ -729,6 +733,10 @@ export class IntegrationService {
         return { sourceTask, workpaper, proposals };
       },
     );
+    const materialPreview =
+      materialId === undefined
+        ? undefined
+        : await this.materialPreview(principal, projectId, materialId);
     return integrationEvidenceBundleSchema.parse({
       projectId,
       evidence: {
@@ -743,6 +751,7 @@ export class IntegrationService {
       ),
       workpaper: scopedWorkpaper(principal, workpaper),
       proposals,
+      ...(materialPreview ? { materialPreview } : {}),
     });
   }
 
@@ -763,6 +772,16 @@ export class IntegrationService {
     requireScope(principal, "project:read");
     const { material } = result.data;
     const sourceVersionId = material.locator?.sourceVersionId;
+    const controlledText =
+      sourceVersionId && material.kind === "MANUAL_REFERENCE"
+        ? await this.vs01.readModel.controlledMaterialText(
+            projectId,
+            materialId,
+            sourceVersionId,
+          )
+        : null;
+    const contentPreview =
+      controlledText ?? material.file?.contentPreview ?? null;
     const evidenceProposalVersion = sourceVersionId
       ? ((
           await this.vs01.readModel.evidenceProposalVersions(
@@ -774,7 +793,9 @@ export class IntegrationService {
     return integrationMaterialPreviewSchema.parse({
       projectId,
       sourceTaskId: result.sourceTaskId,
-      bodyAvailable: result.status === "OK",
+      bodyAvailable: contentPreview !== null,
+      materialType: controlledText !== null ? "CONTROLLED_TEXT" : material.kind,
+      contentPreview,
       material: { ...material, evidenceProposalVersion },
     });
   }

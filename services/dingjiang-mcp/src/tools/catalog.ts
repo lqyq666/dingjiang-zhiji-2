@@ -156,13 +156,13 @@ const operationTools: ToolSeed[] = [
   {
     name: "material.verify",
     description:
-      "用户核对具体材料内容后，由有 material:verify 权限的 PMC 记录核验或退回。先通过 evidence.bundle 的 materials.items 按材料 ID 取 verification.version 作为 expectedVersion，并展示可读取的内容与来源；兼容工具面也可用 get_material_preview。不能使用项目版本或材料需求可用性版本，不得以 AI 判断冒充人工核验。",
+      "用户核对具体材料内容后，由有 material:verify 权限的 PMC 记录核验或退回。先给 evidence.bundle 同时传 projectId 和 materialId，取 materialPreview.material.verification.version 作为 expectedVersion，并展示 contentPreview 与 locator；兼容工具面也可用 get_material_preview。不能使用项目版本或材料需求可用性版本，不得以 AI 判断冒充人工核验。",
     inputSchema: z.toJSONSchema(materialVerifyInput),
   },
   {
     name: "evidence.confirm",
     description:
-      "用户核对 evidence.bundle 中的原文、来源版本及证据提案后，由有 evidence:confirm 权限的 PMC 确认或驳回。不得自行把提案升级为事实。",
+      "用户核对 evidence.bundle 中的原文、来源版本及证据提案后，由有 evidence:confirm 权限的 PMC 确认或驳回。expectedVersion 取该 proposal 的 review.version，review=null 时为 0；不是材料核验版本或提案流版本。不得自行把提案升级为事实。",
     inputSchema: z.toJSONSchema(evidenceConfirmInput),
   },
 ];
@@ -263,7 +263,7 @@ const compatibilitySeeds: ToolSeed[] = [
   {
     name: "get_material_preview",
     description:
-      "用户要求查看材料预览或摘要时使用。用列表中的 items[].id 作为 materialId，即使列表显示无附件也需查询。只有 bodyAvailable 为 true 时才引用返回的预览，否则说明正文不可读。结果同时带有核验状态和最近核验记录。",
+      "用户要求查看材料预览或摘要时使用。用列表中的 items[].id 作为 materialId，即使列表显示无附件也需查询。bodyAvailable=true 时从 contentPreview 读取授权正文，CONTROLLED_TEXT 不需要附件；否则说明正文不可读，不以摘要或对话记忆代替。结果同时带来源与核验状态，可读不代表已核验。",
     inputSchema: {
       type: "object",
       properties: {
@@ -545,7 +545,7 @@ const compatibilitySeeds: ToolSeed[] = [
   {
     name: "evidence.propose",
     description:
-      "由 PMC 从授权项目内 VERIFIED Material 的不可覆盖 SourceVersion 与 exact span 登记 Evidence Proposal；仍非 FACT，必须经 PMC human gate 确认。",
+      "由 PMC 从授权项目内 VERIFIED Material 登记证据提案。先独立读取该材料正文和 locator；expectedVersion 取材料的 evidenceProposalVersion，不能用 verification.version 或项目版本。exactSpan 的 start/end 是保存后正文的 UTF-16 字符位置（与 JavaScript String.slice 一致），exactText 必须等于该片段；创建时会去掉正文首尾空白，应以回读正文计算。仍非 FACT，必须经 PMC 人工确认。",
     inputSchema: {
       type: "object",
       properties: {
@@ -634,11 +634,18 @@ const businessOnlySeeds: ToolSeed[] = [
   {
     name: "evidence.bundle",
     description:
-      "读取授权项目的事实证据、材料核验、SourceVersion 定位、缺口与证据提案。底稿保留当前和最近确认版本。",
+      "读取授权项目的事实证据、材料核验、SourceVersion 定位、缺口与证据提案。需要核对一份材料原文时同时传 materialId，从 materialPreview.contentPreview 独立读取；bodyAvailable=false 时不得用摘要或对话记忆冒充正文。可读不代表已核验，只有用户核对该正文与来源后才能按权限记录核验。底稿保留当前和最近确认版本。",
     inputSchema: {
       type: "object",
       properties: {
         projectId: { type: "string", minLength: 1, maxLength: 120 },
+        materialId: {
+          type: "string",
+          minLength: 1,
+          maxLength: 120,
+          description:
+            "可选：只读取该材料的授权正文和来源；省略时不返回受控正文。",
+        },
       },
       required: ["projectId"],
       additionalProperties: false,
